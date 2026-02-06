@@ -1,0 +1,12 @@
+[project]
+name = "attic-tts"
+version = "0.1.0"
+description = "Ancient Greek TTS workflow"
+requires-python = ">=3.11"
+dependencies = [
+    "google-cloud-texttospeech",
+    "tomli", # For parsing the config.toml
+]
+
+[tool.uv]
+dev-dependencies = []

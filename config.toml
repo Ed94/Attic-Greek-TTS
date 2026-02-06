@@ -1,0 +1,16 @@
+[google]
+credentials_path = "./service-account.json"
+
+[tts]
+# CORRECTED NAME: Removed the hyphen between Chirp and 3
+voice_name = "en-US-Chirp3-HD-Fenrir"
+
+# Chirp 3 works best with uncompressed audio (WAV)
+audio_encoding = "LINEAR16" 
+output_extension = "wav"
+speaking_rate = 1.0 
+output_dir = "./output"
+
+[files]
+input_text = "input.txt"
+intermediate_data = "staging_data.json"
