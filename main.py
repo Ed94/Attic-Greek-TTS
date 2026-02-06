@@ -12,8 +12,9 @@ with open("config.toml", "rb") as f:
 
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = config["google"]["credentials_path"]
 
-# --- 2. CUSTOM ATTIC GREEK TRANSCRIBER ---
-class AtticGreekTranscriber:
+# --- 2. FALLBACK TRANSCRIBER (Regex Based) ---
+# Used if CLTK fails to load or crashes
+class FallbackTranscriber:
     def __init__(self):
         self.map = {
             'α': 'a', 'β': 'b', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'zd', 
@@ -29,49 +30,63 @@ class AtticGreekTranscriber:
         norm = unicodedata.normalize('NFD', text)
         output = []
         skip_next = False
-        
         for i, char in enumerate(norm):
-            if skip_next:
-                skip_next = False
-                continue
+            if skip_next: skip_next = False; continue
             
-            # Remove punctuation from IPA entirely
-            if char in [',', '.', '·', ';', ':', '—', '-', '’']:
-                output.append(" ") 
-                continue
-
-            if char == '\u0314': # Rough breathing
+            # Punctuation to space
+            if char in [',', '.', '·', ';', ':', '—', '-', '’']: output.append(" "); continue
+            # Breathings/Accents
+            if char == '\u0314': 
                 if output: output.insert(-1, 'h')
                 continue
-
-            if char in ['\u0301', '\u0342']: # Accents
+            if char in ['\u0301', '\u0342']: 
                 if output: output.insert(-1, 'ˈ')
                 continue
+            if char in ['\u0313', '\u0300', '\u0345']: continue 
             
-            if char in ['\u0313', '\u0300', '\u0345']: # Ignored
-                continue 
-                
             base_char = char.lower()
             next_char = norm[i+1] if i+1 < len(norm) else ""
             
-            # Diphthongs
-            if base_char == 'ο' and next_char.lower() == 'υ':
-                output.append("uː"); skip_next = True; continue
-            if base_char == 'ε' and next_char.lower() == 'ι':
-                output.append("eː"); skip_next = True; continue
-            if base_char == 'α' and next_char.lower() == 'ι':
-                output.append("ai"); skip_next = True; continue
-            if base_char == 'ο' and next_char.lower() == 'ι':
-                output.append("oi"); skip_next = True; continue
+            # Simple Diphthongs
+            if base_char == 'ο' and next_char.lower() == 'υ': output.append("uː"); skip_next = True; continue
+            if base_char == 'ε' and next_char.lower() == 'ι': output.append("eː"); skip_next = True; continue
+            if base_char == 'α' and next_char.lower() == 'ι': output.append("ai"); skip_next = True; continue
+            if base_char == 'ο' and next_char.lower() == 'ι': output.append("oi"); skip_next = True; continue
                 
-            if base_char in self.map:
-                output.append(self.map[base_char])
-            elif char.isspace():
-                output.append(" ")
+            if base_char in self.map: output.append(self.map[base_char])
+            elif char.isspace(): output.append(" ")
+        return "".join(output)
 
-        return re.sub(r'\s+', ' ', "".join(output)).strip()
+# --- 3. MASTER TRANSCRIBER WRAPPER ---
+def get_ipa_transcription(text):
+    """
+    Tries to use CLTK. If it fails (missing data), falls back to regex.
+    """
+    # Try importing CLTK inside the function to catch setup errors
+    try:
+        from cltk.phonology.grc.transcription import Transcriber
+        
+        # --- FIXED: Capitalized Arguments based on your docs ---
+        cltk_transcriber = Transcriber(dialect="Attic", reconstruction="Probert")
+        
+        # CLTK returns IPA with punctuation. We must strip it.
+        raw_ipa = cltk_transcriber.transcribe(text)
+        
+        # Clean up CLTK output (remove brackets, punctuation)
+        clean_ipa = raw_ipa.replace("[", "").replace("]", "")
+        
+        # Strip punctuation symbols from the IPA string
+        clean_ipa = re.sub(r'[,\.·;:\-—’]', ' ', clean_ipa)
+        
+        # Normalize spaces
+        return re.sub(r'\s+', ' ', clean_ipa).strip()
+        
+    except Exception as e:
+        print(f"  [Notice] CLTK failed ({e}). Using Fallback Transcriber.")
+        fb = FallbackTranscriber()
+        return fb.transcribe(text)
 
-# --- 3. TEXT PARSER ---
+# --- 4. TEXT PARSER ---
 def parse_input_file(filepath):
     if not os.path.exists(filepath):
         print(f"Error: {filepath} not found.")
@@ -86,27 +101,29 @@ def parse_input_file(filepath):
             clean_sections.append(clean_text)
     return clean_sections
 
-# --- 4. PREPARATION ---
+# --- 5. PREPARATION ---
 def prepare_staging_file():
     input_path = config["files"]["input_text"]
     staging_path = config["files"]["intermediate_data"]
     sections = parse_input_file(input_path)
     print(f"--- ANALYZING {len(sections)} SECTIONS ---")
 
-    transcriber = AtticGreekTranscriber()
     work_list = []
     
     for i, text in enumerate(sections):
         preview = (text[:50] + '...') if len(text) > 50 else text
         print(f"Processing Section {i+1}: {preview}")
-        ipa = transcriber.transcribe(text)
+        
+        # Calls the smart wrapper
+        ipa = get_ipa_transcription(text)
+        
         work_list.append({"id": i + 1, "text": text, "ipa": ipa, "status": "ready"})
 
     with open(staging_path, "w", encoding="utf-8") as f:
         json.dump(work_list, f, indent=4, ensure_ascii=False)
     print(f"Created '{staging_path}'.")
 
-# --- 5. GENERATION ---
+# --- 6. GENERATION ---
 def generate_audio_from_staging():
     staging_path = config["files"]["intermediate_data"]
     output_dir = config["tts"]["output_dir"]
@@ -153,13 +170,9 @@ def generate_audio_from_staging():
             speaking_rate=rate
         )
 
-        # --- UPDATED FILENAME GENERATION ---
         clean_name = re.sub(r'[^\w\s]', '', text[:20]).strip().replace(" ", "_")
         ext = config["tts"]["output_extension"]
-        
-        # Format: 01_TextSnippet_VoiceName_rate0.95.mp3
         filename = f"{item['id']:02d}_{clean_name}_{voice_name}_rate{rate}.{ext}"
-        
         output_path = os.path.join(output_dir, filename)
 
         print(f"Generating: {filename}...")
