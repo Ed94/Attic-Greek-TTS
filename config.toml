@@ -7,7 +7,7 @@ voice_name = "en-US-Chirp3-HD-Fenrir"
 
 # Chirp 3 works best with uncompressed audio (WAV)
 audio_encoding = "LINEAR16" 
-output_extension = "wav"
+output_extension = "mp3"
 speaking_rate = 1.0 
 output_dir = "./output"
 

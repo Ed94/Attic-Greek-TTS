@@ -1,12 +1,10 @@
 [project]
 name = "attic-tts"
-version = "0.1.0"
-description = "Ancient Greek TTS workflow"
+version = "0.2.0"
+description = "Ancient Greek TTS with automatic IPA generation"
 requires-python = ">=3.11"
 dependencies = [
     "google-cloud-texttospeech",
-    "tomli", # For parsing the config.toml
+    "tomli",
+    "cltk", # <--- The library that converts Greek to IPA
 ]
-
-[tool.uv]
-dev-dependencies = []
