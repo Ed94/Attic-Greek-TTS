@@ -12,8 +12,8 @@ service_account_file = "./service-account.json"
 # voice_name = "de-DE-Chirp3-HD-Aoede"
 # voice_name = "de-DE-Chirp3-HD-Autonoe"
 # voice_name = "de-DE-Chirp3-HD-Laomedeia"
-voice_name = "de-DE-Chirp3-HD-Gacrux"
-# voice_name = "de-DE-Chirp3-HD-Enceladus"
+# voice_name = "de-DE-Chirp3-HD-Gacrux"
+voice_name = "de-DE-Chirp3-HD-Enceladus"
 
 # Chirp 3 works best with uncompressed audio (WAV)
 audio_encoding   = "LINEAR16" 
@@ -53,21 +53,21 @@ force_breath_words = 20 # Force a breath if no natural spot found by this count
 
 [prosody]
 # PITCH SETTINGS (Integers representing % change)
-contour_peak        = 35     # The "Singing" peak of an Acute accent relative to current baseline
+contour_peak        = 40     # The "Singing" peak of an Acute accent relative to current baseline
 contour_grave       = 5      # The suppressed pitch of a Grave accent
-contour_end         = -12    # How far pitch drops at the end of a word
-circumflex_tail_len = 15     # Length of the Circumflex fall (% of word duration)
-heavy_word_rate     = "-15%" # Speed slowdown for heavy words (e.g. -15%)
+contour_end         = -16    # How far pitch drops at the end of a word
+circumflex_tail_len = 21     # Length of the Circumflex fall (% of word duration)
+heavy_word_rate     = "-18%" # Speed slowdown for heavy words (e.g. -15%)
 # DOWNDRIFT (The "Human" Factor)
 # Sentences start high and drift lower. 
 # This prevents the "Robot List" effect.
 downdrift_start =  10  # Start sentence higher than average
-downdrift_end   = -10  # End sentence lower than average
+downdrift_end   = -17  # End sentence lower than average
 updrift_start   = -5   # Used if sentence ends with ; we use updrift instead
-updrift_end     =  10 
+updrift_end     =  27 
 
 # Rewind the downdrift logic slightly to "lift" the voice up after a pause, preventing the end of long sentences from growling.
-downdrift_clause_based_rewind_scale = 0.35 
+downdrift_clause_based_rewind_scale = 0.26
 
 [options]
 apply_sandhi          = true # Glue words ending in apostrophe (ἀλλ᾽ ἐγὼ -> ἀλλ᾽ἐγὼ)

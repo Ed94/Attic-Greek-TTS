@@ -2,6 +2,9 @@
 
 idk if this is accurate. This was done in an afternoon. Used gemini 3 pro for the attic rules. I made this after watching some podcasts and being confused on why tts was so behind for older langauges.
 
+Κατέβην χθὲς εἰς Πειραιᾶ μετὰ Γλαύκωνος τοῦ Ἀρίστωνος
+ἄνδρα μοι ἔννεπε, μοῦσα, πολύτροπον
+
 See the [pipeline documentation](./PIPELINE.md) in the script header for the full technical breakdown.
 
 ## How It Works
@@ -35,11 +38,6 @@ Greek text goes in, spoken Attic Greek audio comes out. The TTS engine is treate
 ## Input Format
 
 The input file uses `---` as a section delimiter. Each section produces its own WAV file. See [input.txt](./input.txt) for examples.
-
-----
-
-Κατέβην χθὲς εἰς Πειραιᾶ μετὰ Γλαύκωνος τοῦ Ἀρίστωνος
-ἄνδρα μοι ἔννεπε, μοῦσα, πολύτροπον
 
 ## Prerequisites
 
