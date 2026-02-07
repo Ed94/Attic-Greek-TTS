@@ -3,18 +3,19 @@ service_account_file = "./service-account.json"
 
 [tts]
 # CORRECTED NAME: Removed the hyphen between Chirp and 3
-# voice_name = "en-US-Chirp3-HD-Fenrir"
 # voice_name = "de-DE-Chirp3-HD-Fenrir"
-# voice_name = "en-US-Chirp3-HD-Kore"
 # voice_name = "de-DE-Chirp3-HD-Kore"
 # voice_name = "de-DE-Chirp3-HD-Achernar"
-voice_name = "de-DE-Chirp3-HD-Orus"
+# voice_name = "de-DE-Chirp3-HD-Orus"
+# voice_name = "de-DE-Chirp3-HD-Despina"
+# voice_name = "de-DE-Chirp3-HD-Aoede"
+# voice_name = "de-DE-Chirp3-HD-Autonoe"
 # voice_name = "de-DE-Chirp3-HD-Laomedeia"
+voice_name = "de-DE-Chirp3-HD-Enceladus"
 
 # Chirp 3 works best with uncompressed audio (WAV)
 audio_encoding   = "LINEAR16" 
-output_extension = "mp3"
-speaking_rate    = 0.875
+speaking_rate    = 0.90
 output_dir       = "./output"
 pitch            = 0.0
 
@@ -24,7 +25,8 @@ intermediate_data = "staging_data.json"
 
 [processing]
 # Delimiter for separating text into different mp3 files
-delimiter = "---"
+delimiter       = "---"
+max_chunk_bytes = 4500
 
 [cltk]
 dialect        = "Attic"
@@ -32,10 +34,12 @@ reconstruction = "Probert" # Probert is generally considered very accurate for A
 
 [pauses]
 # Adjust these to change the rhythm of the speech
+# These are scaled automatically by speaking_rate
+breath  = "145ms" # For "out of breath"
 comma   = "80ms"  # For , and :
 period  = "145ms" # For . and ; and —
 minor   = "215ms" # For · and -
-newline = "180ms"  # For line breaks (poetry verses)
+newline = "180ms" # For line breaks (empty new lines)
 skip    = "50ms"  # For skipped non-Greek text (headers/numbers)
 
 [pacing]
@@ -44,8 +48,9 @@ max_breath_words   = 9  # Minimum words before looking for a breath spot
 force_breath_words = 20 # Force a breath if no natural spot found by this count
 
 [prosody]
-# Adjust these to change the "singing" quality of the polytonic accent
-# The curve goes: Start Low -> Peak at Accent -> End Low
-contour_start = "-2%"
-contour_peak  = "+20%"
-contour_end   = "-10%"
+# Start Neutral/High so the first syllable isn't swallowed
+contour_start = "+0%" 
+# Go higher for the acute accent (The "Singing" peak)
+contour_peak = "+35%"
+# Drop lower at the end for closure
+contour_end = "-12%"

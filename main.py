@@ -55,6 +55,7 @@
 import os
 import re
 import json
+import struct
 import tomli
 import unicodedata
 from   cltk.phonology.grc.transcription import Transcriber
@@ -260,23 +261,42 @@ def is_breath_trigger(word):
 # ==============================================================================
 
 def build_ssml_fragments(full_text):
-    """
-    Parses text into a list of SSML strings.
-    Handles Punctuation, Words, Pitch, and Breath insertion.
-    """
     # 1. Normalize
     full_text = normalize_text_numerals(full_text)
     full_text = full_text.replace("\r\n", "\n")
     
-    # 2. Config Loading
+    # 2. Handle Newlines (The "Empty Line" Logic)
+    #    Replace Double Newlines with a temporary TOKEN
+    #    Replace Single Newlines with SPACE to preserve flow
+    token_dbl = "||DBL_BRK||"
+    full_text = re.sub(r'\n\s*\n', token_dbl, full_text)
+    full_text = full_text.replace("\n", " ")
+    
+    # 3. Config Loading
+    rate         = config["tts"].get("speaking_rate", 0.9)
     pauses       = config.get("pauses", {})
     pacing       = config.get("pacing", {})
-    t_breath     = pauses.get("breath", "250ms")
+    
+    def scale_time(time_str):
+        if not time_str.endswith("ms"): return time_str
+        try:
+            val = int(time_str.replace("ms", ""))
+            return f"{int(val / rate)}ms"
+        except: return time_str
+
+    t_breath     = scale_time(pauses.get("breath",  "250ms"))
+    t_newline    = scale_time(pauses.get("newline", "80ms"))
+    t_comma      = scale_time(pauses.get("comma",   "165ms"))
+    t_period     = scale_time(pauses.get("period",  "450ms"))
+    t_minor      = scale_time(pauses.get("minor",   "300ms"))
+    
     max_breath   = pacing.get("max_breath_words", 9)
     force_breath = pacing.get("force_breath_words", 20)
     
-    # 3. Split Structure
-    parts = re.split(r'([,\.·;:\-\n])', full_text)
+    # 4. Split by Structure (Punctuation OR Double Break Token)
+    #    We escape the pipes for the regex
+    split_pattern = r'([,\.·;:\-]|\|\|DBL_BRK\|\|)'
+    parts         = re.split(split_pattern, full_text)
     
     fragments     = []
     debug_entries = []
@@ -285,9 +305,9 @@ def build_ssml_fragments(full_text):
     
     for raw_part in parts:
         
-        # --- A. Handle Delimiters ---
-        if raw_part == '\n':
-            fragments.append(f'<break time="{pauses.get("newline", "80ms")}"/>')
+        # --- A. Handle Double Newlines ---
+        if raw_part == token_dbl:
+            fragments.append(f'<break time="{t_newline}"/>')
             debug_entries.append({"type": "break", "val": "newline"})
             words_since_pause = 0
             continue
@@ -295,22 +315,21 @@ def build_ssml_fragments(full_text):
         part = raw_part.strip()
         if not part: continue
             
+        # --- B. Handle Punctuation ---
         if part in [',', ':', '.', ';', '—', '·', '-']:
-            t = pauses.get("period", "450ms")
-            if   part in [',', ':']: t = pauses.get("comma", "165ms")
-            elif part in ['·', '-']: t = pauses.get("minor", "300ms")
-            
+            t = t_period
+            if   part in [',', ':']: t = t_comma
+            elif part in ['·', '-']: t = t_minor
             fragments.append(f'<break time="{t}"/>')
             words_since_pause = 0
             continue
 
-        # --- B. Handle Words ---
+        # --- C. Handle Words ---
         words = part.split()
-        
         for i, word in enumerate(words):
             if not has_greek_chars(word): continue
 
-            # --- Breath Logic ---
+            # Breath Logic
             words_since_pause += 1
             if words_since_pause > max_breath:
                 if is_breath_trigger(word) or words_since_pause >= force_breath:
@@ -318,20 +337,16 @@ def build_ssml_fragments(full_text):
                     debug_entries.append({"type": "breath", "trigger": word})
                     words_since_pause = 0
             
-            # --- IPA & Pitch ---
+            # IPA & Contour
             ipa        = get_ipa_transcription(word)
             dummy_text = romanize_greek(word)
             
             if ipa and dummy_text:
                 contour = calculate_pitch_contour(ipa)
-                
-                # Construct Tag
-                ph_tag = f'<phoneme alphabet="ipa" ph="{ ipa }">{ dummy_text }</phoneme>'
-                frag   = f'<prosody contour="{contour}">{ph_tag}</prosody>' if contour else ph_tag
+                ph_tag  = f'<phoneme alphabet="ipa" ph="{ ipa }">{ dummy_text }</phoneme>'
+                frag    = f'<prosody contour="{contour}">{ph_tag}</prosody>' if contour else ph_tag
                 
                 fragments.append(frag)
-                
-                # Add spacing between words
                 if i < len(words) - 1: fragments.append(" ") 
                 
                 debug_entries.append({
@@ -343,8 +358,24 @@ def build_ssml_fragments(full_text):
     return fragments, debug_entries
 
 # ==============================================================================
-# 6. A U D I O   I / O   &   M A I N   L O O P
+# 6. A U D I O   &   W A V   H E A D E R   F I X
 # ==============================================================================
+
+def fix_wav_header(wav_bytes):
+    """
+    Updates the ChunkSize and Subchunk2Size fields in the WAV header
+    so players recognize the full length of the stitched file.
+    """
+    if len(wav_bytes) < 44: return wav_bytes
+    
+    total_size = len(wav_bytes)
+    chunk_size = total_size - 8
+    subchunk2_size = total_size - 44
+    
+    # WAV is Little Endian (<)
+    # Bytes 4-8: ChunkSize (I = unsigned int 32-bit)
+    new_header = wav_bytes[:4] + struct.pack('<I', chunk_size) + wav_bytes[8:40] + struct.pack('<I', subchunk2_size) + wav_bytes[44:]
+    return new_header
 
 def fetch_audio_bytes(client, ssml_chunk, voice_params, audio_config):
     synthesis_input = texttospeech.SynthesisInput(ssml=ssml_chunk)
@@ -361,57 +392,38 @@ def fetch_audio_bytes(client, ssml_chunk, voice_params, audio_config):
 
 def generate_audio_directly():
     
-    # --- Load Config ---
+    # Config
     input_path = config["files"].get("input_text", "input.txt")
     output_dir = config["files"].get("output_dir", "output")
     debug_path = config["files"].get("debug_file", "debug_dump.json")
     
-    voice_name = config["tts"].get("voice_name", "de-DE-Chirp3-HD-Kore")
+    voice_name = config["tts"].get("voice_name", "de-DE-Chirp3-HD-Orus")
     rate       = config["tts"].get("speaking_rate", 0.9)
-    audio_enc  = config["tts"].get("audio_encoding", "MP3")
+    audio_enc  = config["tts"].get("audio_encoding", "LINEAR16")
     pitch      = config["tts"].get("pitch", 0.0)
-    ext        = config["tts"].get("output_extension", "mp3")
+    ext        = config["tts"].get("output_extension", "wav")
     max_bytes  = config["processing"].get("max_chunk_bytes", 4500)
     
-    # --- Read Input ---
-    if not os.path.exists(input_path):
-        print(f"Error: {input_path} not found.")
-        return
-    with open(input_path, "r", encoding="utf-8") as f:
-        content = f.read()
+    if not os.path.exists(input_path): return
+    with open(input_path, "r", encoding="utf-8") as f: content = f.read()
     sections = [s.strip() for s in content.split(config["processing"]["delimiter"]) if s.strip()]
     
     print(f"--- PROCESSING { len(sections) } SECTIONS ---")
     
-    # --- Init Client ---
     client = texttospeech.TextToSpeechClient()
     os.makedirs(output_dir, exist_ok = True)
     
     lang_code = "-".join(voice_name.split("-")[:2])
-    voice_params = texttospeech.VoiceSelectionParams(
-        language_code=lang_code, name=voice_name
-    )
-    
-    encoding_map = { 
-        "LINEAR16": texttospeech.AudioEncoding.LINEAR16, 
-        "MP3":      texttospeech.AudioEncoding.MP3 
-    }
-    audio_cfg = texttospeech.AudioConfig(
-        audio_encoding = encoding_map.get(audio_enc, texttospeech.AudioEncoding.MP3),
-        speaking_rate  = rate,
-        pitch          = pitch
-    )
+    voice_params = texttospeech.VoiceSelectionParams(language_code=lang_code, name=voice_name)
+    encoding_map = { "LINEAR16": texttospeech.AudioEncoding.LINEAR16, "MP3": texttospeech.AudioEncoding.MP3 }
+    audio_cfg = texttospeech.AudioConfig(audio_encoding = encoding_map.get(audio_enc, texttospeech.AudioEncoding.LINEAR16), speaking_rate = rate, pitch = pitch)
 
     full_debug_log = []
 
-    # --- Main Loop ---
     for i, text in enumerate(sections):
         print(f"Generating Section {i+1}...")
         
-        # 1. Build Fragments
         fragments, section_debug = build_ssml_fragments(text)
-        
-        # 2. Chunking & Stitching
         current_ssml_parts = ["<speak>"]
         current_length     = len("<speak>")
         final_audio_bytes  = bytearray()
@@ -422,16 +434,15 @@ def generate_audio_directly():
 
         for frag in fragments:
             frag_len = len(frag.encode('utf-8'))
-            
-            # Check Limit
             if current_length + frag_len + len("</speak>") > max_bytes:
                 chunk_bytes = flush_buffer(current_ssml_parts)
                 if chunk_bytes:
-                    # Stitch Logic
-                    if audio_enc == "LINEAR16" and len(final_audio_bytes) > 0:
-                        final_audio_bytes += chunk_bytes[44:] # Strip WAV Header
+                    # If it's the very first chunk, keep header
+                    if len(final_audio_bytes) == 0:
+                        final_audio_bytes += chunk_bytes
                     else:
-                        final_audio_bytes += chunk_bytes # MP3 Concat
+                        # Strip 44-byte WAV header from subsequent chunks
+                        final_audio_bytes += chunk_bytes[44:]
                 
                 print(f"    -> Stitched chunk ({len(chunk_bytes) if chunk_bytes else 0} bytes)")
                 current_ssml_parts = ["<speak>"]
@@ -440,17 +451,19 @@ def generate_audio_directly():
             current_ssml_parts.append(frag)
             current_length += frag_len
         
-        # Flush Remaining
         if len(current_ssml_parts) > 1:
             chunk_bytes = flush_buffer(current_ssml_parts)
             if chunk_bytes:
-                if audio_enc == "LINEAR16" and len(final_audio_bytes) > 0:
-                    final_audio_bytes += chunk_bytes[44:]
-                else:
+                if len(final_audio_bytes) == 0:
                     final_audio_bytes += chunk_bytes
+                else:
+                    final_audio_bytes += chunk_bytes[44:]
             print(f"    -> Stitched final chunk ({len(chunk_bytes) if chunk_bytes else 0} bytes)")
 
-        # 3. Save File
+        # --- FIX HEADER ---
+        if audio_enc == "LINEAR16" and len(final_audio_bytes) > 44:
+            final_audio_bytes = fix_wav_header(final_audio_bytes)
+
         greek_slug = "".join([c for c in text[:40] if has_greek_chars(c) or c.isspace()])
         safe_slug  = sanitize_filename(greek_slug)
         if not safe_slug: safe_slug = f"section_{i+1}"
@@ -464,13 +477,8 @@ def generate_audio_directly():
         else:
             print("  -> Error: No audio generated for this section.")
 
-        full_debug_log.append({ 
-            "section": i+1, 
-            "original": text, 
-            "ipa_breakdown": section_debug 
-        })
+        full_debug_log.append({ "section": i+1, "original": text, "ipa_breakdown": section_debug })
 
-    # --- Save Debug ---
     with open(debug_path, "w", encoding="utf-8") as f:
         json.dump(full_debug_log, f, indent=2, ensure_ascii=False)
     print(f"\n--- Debug dump saved to {debug_path} ---")
