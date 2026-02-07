@@ -397,7 +397,7 @@ def generate_audio_directly():
     output_dir = config["files"].get("output_dir", "output")
     debug_path = config["files"].get("debug_file", "debug_dump.json")
     
-    voice_name = config["tts"].get("voice_name", "de-DE-Chirp3-HD-Orus")
+    voice_name = config["tts"].get("voice_name", "de-DE-Chirp3-HD-Enceladus")
     rate       = config["tts"].get("speaking_rate", 0.9)
     audio_enc  = config["tts"].get("audio_encoding", "LINEAR16")
     pitch      = config["tts"].get("pitch", 0.0)

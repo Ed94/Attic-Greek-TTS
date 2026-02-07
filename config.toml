@@ -22,6 +22,7 @@ pitch            = 0.0
 [files]
 input_text        = "input.txt"
 intermediate_data = "staging_data.json"
+debug_file        = 'debug_dump.json'
 
 [processing]
 # Delimiter for separating text into different mp3 files
