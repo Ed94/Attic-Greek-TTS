@@ -8,9 +8,6 @@
    Feeding it Greek script results in either Modern Greek pronunciation (wrong
    vowels, stress instead of pitch) or total failure.
 
-   -----------------------------------------------------------------------------
-   T H E   S O L U T I O N
-   -----------------------------------------------------------------------------
    We treat the TTS engine as a dumb synthesizer. We calculate the exact
    phonemes (IPA) ourselves and wrap them in SSML tags. We use a German voice
    model because its phoneme set (pure vowels, aspirated stops) maps significantly
@@ -47,7 +44,7 @@
       - Break the stream into chunks < 4500 bytes (Google API limit).
       - Request audio for each chunk.
       - Strip WAV headers (if Linear16) and stitch bytes in memory.
-      - Save a single, seamless MP3 file.
+      - Save a single wav file.
 
 ================================================================================
 """
