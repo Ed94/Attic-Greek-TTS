@@ -837,7 +837,12 @@ def scan_greek_vowel_units(word):
         # Consume combining marks after this vowel, watching for iota subscript
         j = i + 1
         has_iota_subscript = False
+        has_macron = False
         while j < len(chars) and ('\u0300' <= chars[j] <= '\u036F' or chars[j] == IOTA_SUBSCRIPT):
+            if chars[j] == '\u0308':
+                has_diaeresis = True
+            if chars[j] == '\u0304':
+                has_macron = True
             if chars[j] == IOTA_SUBSCRIPT:
                 has_iota_subscript = True
             j += 1
@@ -877,6 +882,8 @@ def scan_greek_vowel_units(word):
                     while i < len(chars) and ('\u0300' <= chars[i] <= '\u036F' or chars[i] == IOTA_SUBSCRIPT):
                         i += 1
                     continue
+
+        unit["is_long"] = char.lower() in INHERENTLY_LONG_VOWELS or has_macron
 
         units.append(unit)
         i = j  # skip past combining marks we already scanned
