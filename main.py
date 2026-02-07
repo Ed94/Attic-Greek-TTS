@@ -68,23 +68,44 @@ ARCHITECTURAL PIPELINE:
 
 TUNABLES (config.toml):
 -----------------------
+[files]
+    input_text            :: Path to source text (e.g., "input.txt").
+    debug_file            :: Path to debug JSON dump.
+
 [options]
+    dry_run               :: (Bool) If True, no API calls are made.
     apply_sandhi          :: (Bool) Merge words ending in apostrophe.
     apply_rough_breathing :: (Bool) Pronounce the 'h' (dasia).
 
 [prosody]
-    contour_peak    :: (Int) Pitch rise for Acute accent (e.g., 35).
-    downdrift_start :: (Int) Baseline pitch at sentence start (e.g., 10).
-    downdrift_end   :: (Int) Baseline pitch at sentence end (e.g., -10).
-    updrift_start   :: (Int) Start pitch for questions (e.g., -5).
-    updrift_end     :: (Int) End pitch for questions (e.g., 10).
-    heavy_word_rate :: (Str) Speed slowdown for heavy words (e.g., "-15%").
+    contour_peak          :: (Int) Pitch rise for Acute accent (e.g., 35).
+    contour_grave         :: (Int) Pitch rise for Grave accent (e.g., 5).
+    contour_end           :: (Int) Pitch drop after accent (e.g., -12).
+    circumflex_tail_len   :: (Int) Duration of circumflex fall.
+    downdrift_start       :: (Int) Baseline pitch at sentence start (e.g., 10).
+    downdrift_end         :: (Int) Baseline pitch at sentence end (e.g., -10).
+    updrift_start         :: (Int) Start pitch for questions (e.g., -5).
+    updrift_end           :: (Int) End pitch for questions (e.g., 10).
+    heavy_word_rate       :: (Str) Speed slowdown for heavy words (e.g., "-15%").
+    downdrift_clause_based_rewind_scale :: (Float) Reset intonation at commas (0.0-1.0).
+
+[pauses]
+    breath, newline, comma, period, minor :: (Str) MS duration (e.g., "145ms").
 
 [pacing]
-    force_breath_words :: (Int) Max words allowed before forcing a pause.
+    force_breath_words    :: (Int) Max words allowed before forcing a pause.
+    max_breath_words      :: (Int) Ideal phrase length.
+
+[processing]
+    max_chunk_bytes       :: (Int) Max SSML size per API call (default 4500).
+    delimiter             :: (Str) Separator for input sections (e.g., "---").
 
 [tts]
-    speaking_rate   :: Global speed multiplier.
+    voice_name            :: Google Voice ID (e.g., "de-DE-Chirp3-HD-Enceladus").
+    speaking_rate         :: Global speed multiplier.
+    pitch                 :: Global pitch offset.
+    audio_encoding        :: "LINEAR16" (WAV) or "MP3".
+    output_dir            :: Directory for generated audio.
 
 CACHING:
 --------
@@ -92,6 +113,11 @@ IPA transcription is expensive. We maintain 'transcription_cache.json'.
 The cache is updated atomically after every section is processed to prevent
 data loss during long batch operations.
 *Auto-Invalidation*: If config.toml or the script changes, the cache wipes.
+
+DEPENDENCIES:
+-------------
+Requires 'cltk' with 'grc_models_cltk' downloaded.
+The script will auto-detect missing models and provide download instructions.
 
 ================================================================================
 """
@@ -128,10 +154,17 @@ if "google_cloud" in config:
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = config["google_cloud"]["service_account_file"]
 
 print(":: Initializing CLTK Transcriber (Attic/Probert)...")
-TRANSCRIBER = Transcriber(
-    dialect        = config["cltk"]["dialect"], 
-    reconstruction = config["cltk"]["reconstruction"]
-)
+try:
+    TRANSCRIBER = Transcriber(
+        dialect        = config["cltk"]["dialect"], 
+        reconstruction = config["cltk"]["reconstruction"]
+    )
+except Exception as e:
+    print(f"\n[CRITICAL] CLTK Initialization Failed: {e}")
+    print(":: You likely need to download the Greek models.")
+    print(":: Run this python command separately:")
+    print("   from cltk.data.fetch import FetchCorpus; FetchCorpus(language='grc').import_corpus('grc_models_cltk')")
+    sys.exit(1)
 
 def get_file_hash(filepath):
     if not os.path.exists(filepath): return ""
@@ -266,10 +299,16 @@ def normalize_text_numerals(text):
 def romanize_greek(text):
     """ 
     Transliterates Greek to Latin. 
-    Corrects the "Ehis" bug by placing 'h' at the start of the word 
-    if rough breathing is present, rather than inside the diphthong.
+    1. Normalizes to NFD.
+    2. Contextualizes Upsilon: 'u' in diphthongs (au, eu, ou), 'y' elsewhere.
+    3. Handles Rough Breathing ('h') injection.
     """
     norm = unicodedata.normalize('NFD', text)
+    
+    # IMPROVEMENT: Fix Diphthongs (α,ε,ο,η,ω + optional accents + υ) -> u
+    # This prevents "autos" becoming "aytos" which German TTS reads weirdly.
+    norm = re.sub(r'([αεοηωΑΕΟΗΩ])([\u0300-\u036F]*)([υΥ])', r'\1\2u', norm)
+
     result = []
     mapping = {
         'α': 'a', 'β': 'b', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z', 
@@ -293,8 +332,9 @@ def romanize_greek(text):
         
         c = char.lower()
         if   c in mapping:    result.append(mapping[c])
-        elif 'a' <= c <= 'z': result.append(char)
+        elif 'a' <= c <= 'z': result.append(char) # Catches the 'u' from our regex
         elif char.isspace():  result.append(char)
+        
     return "".join(result)
 
 def has_greek_chars(text):
@@ -721,6 +761,8 @@ def generate_audio():
     if dry_run: print(":: DRY RUN MODE: No audio will be generated.")
     
     client = None
+    # Ensure output directory exists even for dry runs (for debug/playlist files)
+    os.makedirs(output_dir, exist_ok = True) 
     if not dry_run:
         client = texttospeech.TextToSpeechClient()
         os.makedirs(output_dir, exist_ok = True)

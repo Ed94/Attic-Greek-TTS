@@ -17,7 +17,7 @@ voice_name = "de-DE-Chirp3-HD-Gacrux"
 
 # Chirp 3 works best with uncompressed audio (WAV)
 audio_encoding   = "LINEAR16" 
-speaking_rate    = 0.80
+speaking_rate    = 0.90
 output_dir       = "./output"
 pitch            = 0.0
 
