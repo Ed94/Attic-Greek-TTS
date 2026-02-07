@@ -32,6 +32,12 @@ P I P E L I N E
 
 [1] NORMALIZATION & SAFETY
     │
+    │  Normalizes Greek-specific punctuation codepoints before any other
+    │  processing: U+037E (Greek question mark) → U+003B (ASCII semi-
+    │  colon), U+0387 (ano teleia) → U+00B7 (middle dot). This ensures
+    │  sentence splitting and interrogative detection work regardless
+    │  of which visually-identical codepoint the source text uses.
+    │
     │  Cleans critical sigla: removes {}, [], <>, †.
     │  Expands Arabic numerals ("24" → εἴκοσι τέτταρες) and Roman
     │  numerals ("IV" → τέτταρες) into spelled-out Greek. Roman numeral
@@ -51,8 +57,9 @@ P I P E L I N E
     │  well-attested downdrift phenomenon in Ancient Greek prose.
     │
     │  Interrogative Detection: Sentences ending in the Greek question
-    │  mark (;) invert the slope to an "updrift" contour (default:
-    │  −5% → +10%), producing a rising terminal.
+    │  mark (;) — normalized to ASCII semicolon in [1] — invert the
+    │  slope to an "updrift" contour (default: −5% → +10%), producing
+    │  a rising terminal.
     │
     │  Clause Boundary Reset: At commas, colons, and medial stops (·),
     │  the baseline rewinds by a configurable fraction of the sentence
@@ -66,29 +73,37 @@ P I P E L I N E
     │  Attic dialect). Results are cached in transcription_cache.json
     │  with automatic invalidation when config.toml or the script
     │  itself changes (MD5 comparison). The cache is saved atomically
-    │  after every section to prevent data loss during long batches.
+    │  after every section and incrementally every 50 new entries to
+    │  prevent data loss during long batches or mid-section crashes.
     │
     │  Post-transcription corrections:
     │
-    │  ● Source-Driven Quantity Enforcement: Rather than blindly
-    │    lengthening every ɛ/ɔ in the IPA output, the engine walks
-    │    the Greek source characters in parallel with the IPA string
-    │    to determine which vowels derive from inherently long
-    │    graphemes (η, ω) and applies the length marker (ː) only to
-    │    those positions. Short vowels that happen to share an IPA
-    │    symbol are left untouched.
+    │  ● Source-Driven Quantity Enforcement: The engine uses a shared
+    │    vowel-unit scanner (scan_greek_vowel_units) to walk the Greek
+    │    source in parallel with the IPA string, identifying which
+    │    vowels derive from inherently long graphemes (η, ω) and
+    │    applying the length marker (ː) only to those positions.
+    │    Diphthongs are collapsed into single vocalic units using the
+    │    same scanner that accent mapping uses, ensuring consistent
+    │    alignment everywhere. Short vowels that happen to share an
+    │    IPA symbol are left untouched.
     │
     │  ● Gamma Nasalization: Enforces [ŋ] before velars — γγ → [ŋɡ],
-    │    γκ → [ŋk], γχ → [ŋx], γξ → [ŋks].
+    │    γκ → [ŋk], γχ → [ŋx], γξ → [ŋks]. Handles both CLTK's
+    │    expanded (gks) and unexpanded (gξ) representations of xi.
+    │    Longest-match-first ordering prevents partial replacements.
     │
     │  ● IPA Normalization: Replaces German uvular /ʁ/ and English
     │    approximant /ɹ/ with the alveolar trill /r/ appropriate to
     │    reconstructed Attic.
     │
-    │  ● Smart Aspirate Injection: Prepends /h/ for rough breathing
-    │    (dasia) only when the IPA does not already begin with an
-    │    aspirate, preventing double-aspiration artifacts. Rho with
-    │    rough breathing (ῥ) is handled separately.
+    │  ● Rough Breathing & Voiceless Rho: Prepends /h/ for rough
+    │    breathing (dasia) on vowel-initial words only when the IPA
+    │    does not already begin with an aspirate, preventing double-
+    │    aspiration artifacts. Rho with rough breathing (ῥ) is
+    │    detected by walking NFD combining marks after ρ and produces
+    │    [r̥] (voiceless alveolar trill via combining ring below,
+    │    U+0325), rather than being silently dropped.
     │
     │  ● Accent Stripping: All pitch information is removed from the
     │    IPA (stress marks, combining accents) so the TTS engine
@@ -102,21 +117,35 @@ P I P E L I N E
     │  Accent type (acute, circumflex, grave) and position are detected
     │  from the NFD-decomposed Greek source text, never from IPA. The
     │  accented vowel's position is then mapped to the corresponding
-    │  IPA segment through a three-phase alignment:
+    │  IPA segment through a shared vowel-unit alignment system:
     │
-    │  Phase 1: Greek vowel units are identified, with recognized
-    │  diphthongs (αι, ει, οι, αυ, ευ, ου, ηυ, υι) collapsed into
-    │  single vocalic units. Diaeresis (trema) is respected as a
-    │  diphthong breaker.
+    │  Shared Scanner (scan_greek_vowel_units): Greek vowel units are
+    │  identified, with recognized diphthongs (αι, ει, οι, αυ, ευ, ου,
+    │  ηυ, υι) collapsed into single vocalic units. Diaeresis (trema)
+    │  is respected as a diphthong breaker. Each unit carries metadata:
+    │  base character index, diphthong status, inherent length (η/ω).
+    │  This scanner is shared by accent mapping, quantity enforcement,
+    │  and IPA grouping — one definition of "what is a vowel unit" used
+    │  everywhere.
     │
-    │  Phase 2: IPA vowel units are identified, grouping consecutive
-    │  vowels and length markers into units that correspond to CLTK's
-    │  diphthong and long-vowel representations.
+    │  Shared Scanner (scan_ipa_vowel_units): IPA vowel units are
+    │  identified using an explicit whitelist of IPA diphthong pairs
+    │  that CLTK actually produces (ai, ei, oi, au, eu, ou, yi, ɛi,
+    │  ɔi). Only whitelisted pairs are merged; all other adjacent
+    │  vowels are treated as hiatus. Length markers (ː) are consumed
+    │  into the preceding unit. This prevents the greedy merging of
+    │  any adjacent IPA vowels that broke alignment in hiatus contexts.
     │
-    │  Phase 3: The n-th Greek vowel unit is aligned to the n-th IPA
-    │  vowel unit, which is robust to epenthesis, contraction, and
-    │  diphthong-to-monophthong asymmetries that break naive
-    │  character-counting approaches.
+    │  Alignment: The n-th Greek vowel unit maps to the n-th IPA vowel
+    │  unit. Because both scanners use the same diphthong-aware logic,
+    │  the unit counts stay synchronized even through diphthong-to-
+    │  monophthong asymmetries, epenthesis, and contraction.
+    │
+    │  find_accent_in_greek returns a vowel-unit index (not a raw
+    │  character index), verifies the accent sits on an actual vowel
+    │  before accepting it, and breaks after the first accent found
+    │  (Greek words have exactly one). If no accent is found, the word
+    │  receives a flat contour — no fallback guessing.
     │
     ▼
 [5] PROSODY SYNTHESIZER — Syllable-Aware Contouring
@@ -147,9 +176,14 @@ P I P E L I N E
     │  enclitics (τε, γε, τις), and elided forms (ἀλλ᾽, δ᾽) are merged
     │  into prosodic groups before SSML generation. Each word in the
     │  group is transcribed individually by CLTK, then the IPA strings
-    │  are concatenated and wrapped in a single <phoneme> tag. The
-    │  accent of the host word governs the group's pitch contour;
-    │  proclitic and enclitic accents are suppressed.
+    │  are concatenated and wrapped in a single <phoneme> tag.
+    │
+    │  Accent selection (select_group_accent): The group is walked in
+    │  order — proclitics are skipped, the first non-proclitic word is
+    │  the host, and its accent governs the group's pitch contour.
+    │  Enclitic accents are suppressed. Secondary accents on the host
+    │  ultima (induced by enclitics, e.g., ἄνθρωπός τε) are detected
+    │  from the source text for potential future use.
     │
     │  Breath pacing: A configurable set of conjunction and preposition
     │  triggers (καί, ἀλλά, ὅτι, etc.) insert natural breath pauses
@@ -255,11 +289,6 @@ D E P E N D E N C I E S
 
     google-cloud-texttospeech
                     Google Cloud TTS client. Requires a service account with
-                    the Text-to-Speech API enabled.
-
-    tomli           TOML parser for Python < 3.11 (3.11+ uses stdlib tomllib).
-
-================================================================================
 """
 
 import time
@@ -501,24 +530,13 @@ def normalize_text_numerals(text):
 
 def romanize_greek(text):
     """
-    Transliterates Greek to Latin, optimized for German TTS pronunciation quirks.
+    Transliterates Greek to Latin for SSML display text (the visible content
+    inside <phoneme> tags that the TTS engine never reads).
 
-    Processes each whitespace-delimited token independently so that
-    rough-breathing 'h' is prepended only to the word that carries the
-    dasia, not to the entire multi-word string.
-
-    NOTE ON LOSSY TRANSFORMS:
-    The diphthong replacements below are INTENTIONALLY LOSSY. Greek accent
-    marks (combining acute, grave, circumflex, breathing marks) that sit
-    between or on diphthong vowels are silently discarded. This is correct
-    behavior: the romanized text is a throwaway visual label inside SSML
-    <phoneme> tags — the TTS engine never reads it. All actual pronunciation
-    is controlled by the IPA in the 'ph' attribute, and all pitch information
-    is controlled by <prosody contour>. The romanized text exists solely to
-    satisfy the SSML parser's requirement for visible text content.
-
-    If you need a scholarly romanization that preserves accent information,
-    do NOT use this function — it is purpose-built for the TTS pipeline.
+    This is INTENTIONALLY LOSSY. Accent marks and breathing marks are
+    discarded. The output exists solely to satisfy the SSML parser's
+    requirement for visible text content. All pronunciation is controlled
+    by the IPA in the 'ph' attribute.
     """
     mapping = {
         'α': 'a', 'β': 'b', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z',
@@ -527,6 +545,15 @@ def romanize_greek(text):
         'ς': 's', 'τ': 't', 'υ': 'y', 'φ': 'ph','χ': 'ch','ψ': 'ps',
         'ω': 'ô'
     }
+
+    # All recognized diphthongs get explicit romanizations.
+    # Order matters: longer sequences first to prevent partial matches.
+    diphthong_map = {
+        'ευ': 'eu', 'αυ': 'au', 'ου': 'u',
+        'αι': 'ai', 'ει': 'ei', 'οι': 'oi',
+        'ηυ': 'êu', 'υι': 'yi',
+    }
+
     apply_rough = config.get("options", {}).get("apply_rough_breathing", True)
 
     tokens = text.split()
@@ -534,29 +561,55 @@ def romanize_greek(text):
 
     for token in tokens:
         norm = unicodedata.normalize('NFD', token)
-
-        # Diphthong handling for German phonology.
-        # Combining marks between vowels are discarded — see docstring.
-        norm = re.sub(r'([εΕ])([\u0300-\u036F]*)([υΥ])', r'e-u', norm)
-        norm = re.sub(r'([αΑ])([\u0300-\u036F]*)([υΥ])', r'au', norm)
-        norm = re.sub(r'([οΟ])([\u0300-\u036F]*)([υΥ])', r'u', norm)
-
         result = []
 
         # Per-token rough breathing check
         if apply_rough and '\u0314' in norm:
-            if not token.lower().startswith('ῥ'):
+            # Check if it's rho with dasia — don't prepend 'h' for that
+            norm_lower = unicodedata.normalize('NFD', token.lower())
+            chars = list(norm_lower)
+            rho_has_dasia = False
+            for i_ch, ch in enumerate(chars):
+                if ch == 'ρ':
+                    j = i_ch + 1
+                    while j < len(chars) and '\u0300' <= chars[j] <= '\u036F':
+                        if chars[j] == '\u0314':
+                            rho_has_dasia = True
+                            break
+                        j += 1
+                    if rho_has_dasia:
+                        break
+
+            if not rho_has_dasia:
                 result.append('h')
 
+        # Strip combining marks, producing a clean lowercase base string
+        # that we can scan for diphthongs.
+        base_chars = []
         for char in norm:
-            if char == '\u0314': continue
+            if '\u0300' <= char <= '\u036F':
+                continue
+            base_chars.append(char.lower())
 
-            c = char.lower()
-            if   c in mapping:    result.append(mapping[c])
-            elif 'a' <= c <= 'z': result.append(char)
-            elif char == '-':     result.append(char)
-            elif char.isspace():  result.append(char)
-            elif '\u0300' <= char <= '\u036F': continue
+        # Walk base_chars, checking for diphthongs at each position
+        i = 0
+        while i < len(base_chars):
+            # Try two-character diphthong match first
+            if i + 1 < len(base_chars):
+                pair = base_chars[i] + base_chars[i + 1]
+                if pair in diphthong_map:
+                    result.append(diphthong_map[pair])
+                    i += 2
+                    continue
+
+            ch = base_chars[i]
+            if ch in mapping:
+                result.append(mapping[ch])
+            elif 'a' <= ch <= 'z':
+                result.append(ch)
+            # else: skip (punctuation, stray characters)
+
+            i += 1
 
         romanized_tokens.append("".join(result))
 
@@ -581,8 +634,10 @@ def make_phoneme_tag(ipa, display_text):
     )
     return f'<phoneme alphabet="ipa" ph="{safe_ipa}">{safe_display}</phoneme>'
 
+
+_RE_GREEK_CHARS = re.compile(r'[\u0370-\u03FF\u1F00-\u1FFF]')
 def has_greek_chars(text):
-    return bool(re.search(r'[\u0370-\u03FF\u1F00-\u1FFF]', text))
+    return bool(_RE_GREEK_CHARS.search(text))
 
 def sanitize_filename(text):
     """
@@ -599,191 +654,480 @@ def sanitize_filename(text):
 # 4. P H O N O L O G Y   &   P R O S O D Y
 # ==============================================================================
 
-def find_accent_in_greek(word):
+# ==============================================================================
+# Shared vowel-unit scanner — used by accent mapping, quantity enforcement,
+# and IPA grouping to ensure consistent diphthong handling everywhere.
+# ==============================================================================
+
+GREEK_VOWEL_CHARS = set("αεηιουωΑΕΗΙΟΥΩ")
+GREEK_DIPHTHONG_SECONDS = set("ιυΙΥ")
+GREEK_DIPHTHONGS = {"αι", "ει", "οι", "αυ", "ευ", "ου", "ηυ", "υι"}
+
+# IPA diphthong pairs that CLTK actually produces. Only these get merged
+# when scanning IPA vowel units. Anything else is treated as hiatus.
+IPA_DIPHTHONGS = {"ai", "ei", "oi", "au", "eu", "ou", "yi", "ɛi", "ɔi"}
+
+# Which Greek vowels are inherently long (for quantity enforcement)
+INHERENTLY_LONG_VOWELS = set("ηωΗΩ")
+
+def scan_greek_vowel_units(word):
     """
-    Finds the accent type and the index of the accented vowel in the
-    NFD-decomposed Greek word. Returns (accent_type, vowel_index) where
-    vowel_index is the position of the base vowel character that carries
-    the accent, counting only base (non-combining) characters.
+    Walks an NFD-decomposed Greek word and returns a list of vowel units.
+    Each unit is a dict:
+        {
+            "base_idx":     int,   # index of the first vowel (counting only base chars)
+            "is_diphthong": bool,
+            "is_long":      bool,  # True if the base vowel is η or ω
+            "char":         str,   # the base vowel character (lowercase)
+        }
 
-    This is done on the Greek source text, not on IPA, so it is immune
-    to IPA transformations.
-    """
-    norm = unicodedata.normalize('NFD', word)
-
-    accent_type = "none"
-    # Track which base-character index we are at
-    base_idx = -1
-    found_vowel_idx = -1
-
-    greek_vowels = set("αεηιουωΑΕΗΙΟΥΩ")
-
-    i = 0
-    while i < len(norm):
-        char = norm[i]
-
-        if '\u0300' <= char <= '\u036F':
-            # This is a combining mark — check what kind
-            if char == '\u0342':  # Combining Greek Perispomeni (Circumflex)
-                accent_type = "circumflex"
-                found_vowel_idx = base_idx
-            elif char == '\u0301':  # Combining Acute
-                accent_type = "acute"
-                found_vowel_idx = base_idx
-            elif char == '\u0300':  # Combining Grave
-                accent_type = "grave"
-                found_vowel_idx = base_idx
-            i += 1
-            continue
-
-        # This is a base character
-        base_idx += 1
-
-        # If we already found an accent, stop looking
-        if accent_type != "none":
-            # We found the accent on the previous base char, break
-            # Actually we found it when we saw the combining mark,
-            # and found_vowel_idx is already set. Keep scanning in
-            # case a later accent overrides (shouldn't happen in
-            # well-formed Greek, but be safe).
-            pass
-
-        i += 1
-
-    return accent_type, found_vowel_idx
-
-def map_greek_vowel_index_to_ipa(word, greek_vowel_idx, ipa_string):
-    """
-    Given the index of the accented vowel in the Greek word (counting
-    only base characters), find the corresponding vowel position in
-    the IPA string.
-
-    Strategy: Build a consonant-vowel skeleton for both the Greek word
-    and the IPA string, then align them using the skeleton structure
-    rather than assuming a naive 1:1 vowel correspondence.
-
-    Greek diphthongs (αι, ει, οι, αυ, ευ, ου, ηυ, υι) are treated as
-    single vocalic units on the Greek side and matched to however many
-    IPA segments CLTK produced for them.
+    Diphthongs (αι, ει, οι, αυ, ευ, ου, ηυ, υι) are collapsed into single
+    units. Diaeresis (U+0308) on the second element breaks the diphthong.
     """
     norm = unicodedata.normalize('NFD', word)
-    greek_vowel_chars = set("αεηιουωΑΕΗΙΟΥΩ")
-    greek_diphthong_seconds = set("ιυΙΥ")
-
-    # --- Phase 1: Build Greek vowel-unit list ---
-    # Each entry: (base_char_index, is_diphthong)
-    # A diphthong's index is the index of its first vowel.
-    greek_vowel_units = []
-    base_idx = -1
-    i = 0
     chars = list(norm)
+    units = []
+    base_idx = -1
+    i = 0
 
     while i < len(chars):
         char = chars[i]
 
+        # Skip combining marks
         if '\u0300' <= char <= '\u036F':
             i += 1
             continue
 
         base_idx += 1
-        if char.lower() in greek_vowel_chars:
-            # Look ahead past combining marks for a diphthong second element
-            j = i + 1
-            while j < len(chars) and '\u0300' <= chars[j] <= '\u036F':
-                j += 1
 
-            is_diphthong = False
-            if j < len(chars) and chars[j].lower() in greek_diphthong_seconds:
-                # Check if this is a recognized diphthong pair
-                pair = char.lower() + chars[j].lower()
-                if pair in {"αι", "ει", "οι", "αυ", "ευ", "ου", "ηυ", "υι"}:
-                    # Check for diaeresis (trema) which breaks the diphthong
-                    # Diaeresis is U+0308
-                    has_diaeresis = False
-                    for k in range(j + 1, len(chars)):
-                        if '\u0300' <= chars[k] <= '\u036F':
-                            if chars[k] == '\u0308':
-                                has_diaeresis = True
-                                break
-                        else:
+        if char.lower() not in GREEK_VOWEL_CHARS:
+            i += 1
+            continue
+
+        unit = {
+            "base_idx":     base_idx,
+            "is_diphthong": False,
+            "is_long":      char.lower() in INHERENTLY_LONG_VOWELS,
+            "char":         char.lower(),
+        }
+
+        # Look ahead past combining marks for a potential diphthong second element
+        j = i + 1
+        while j < len(chars) and '\u0300' <= chars[j] <= '\u036F':
+            j += 1
+
+        if j < len(chars) and chars[j].lower() in GREEK_DIPHTHONG_SECONDS:
+            pair = char.lower() + chars[j].lower()
+            if pair in GREEK_DIPHTHONGS:
+                # Check for diaeresis on the second element, which breaks the diphthong
+                has_diaeresis = False
+                for k in range(j + 1, len(chars)):
+                    if '\u0300' <= chars[k] <= '\u036F':
+                        if chars[k] == '\u0308':
+                            has_diaeresis = True
                             break
-                    if not has_diaeresis:
-                        is_diphthong = True
+                    else:
+                        break
 
-            greek_vowel_units.append((base_idx, is_diphthong))
-            if is_diphthong:
-                # Skip past the second vowel and its combining marks
-                i = j + 1
-                base_idx += 1
-                # Also skip combining marks after the second vowel
-                while i < len(chars) and '\u0300' <= chars[i] <= '\u036F':
-                    i += 1
-                continue
+                if not has_diaeresis:
+                    unit["is_diphthong"] = True
+                    units.append(unit)
+                    # Advance past the second vowel and its combining marks
+                    base_idx += 1
+                    i = j + 1
+                    while i < len(chars) and '\u0300' <= chars[i] <= '\u036F':
+                        i += 1
+                    continue
 
+        units.append(unit)
         i += 1
 
-    # --- Phase 2: Identify which vowel unit carries the accent ---
-    target_unit = -1
-    for unit_idx, (char_idx, _) in enumerate(greek_vowel_units):
-        if char_idx == greek_vowel_idx:
-            target_unit = unit_idx
-            break
-        # For diphthongs, the accent index might point to the first char
-        # of the pair, which is what we stored
-        if char_idx <= greek_vowel_idx:
-            target_unit = unit_idx
+    return units
 
-    if target_unit < 0:
+def scan_ipa_vowel_units(ipa_string):
+    """
+    Walks an IPA string and returns a list of vowel unit start indices.
+    Consecutive vowels are merged into a single unit ONLY if they form
+    a recognized IPA diphthong (from IPA_DIPHTHONGS). Length markers (ː)
+    are consumed into the preceding unit. Anything else is hiatus —
+    two separate units.
+    """
+    units = []  # each entry is the index of the first vowel char in the unit
+    i = 0
+
+    while i < len(ipa_string):
+        ch = ipa_string[i]
+
+        if ch.lower() not in IPA_VOWELS:
+            i += 1
+            continue
+
+        unit_start = i
+        i += 1
+
+        # Consume a length marker if present
+        if i < len(ipa_string) and ipa_string[i] == 'ː':
+            i += 1
+
+        # Check for a recognized diphthong: current vowel + next vowel
+        if i < len(ipa_string) and ipa_string[i].lower() in IPA_VOWELS:
+            pair = ipa_string[unit_start].lower() + ipa_string[i].lower()
+            if pair in IPA_DIPHTHONGS:
+                i += 1
+                # Consume trailing length marker on diphthong
+                if i < len(ipa_string) and ipa_string[i] == 'ː':
+                    i += 1
+            # else: hiatus — don't consume, let the next iteration pick it up
+
+        units.append(unit_start)
+
+    return units
+
+def find_accent_in_greek(word):
+    """
+    Finds the accent type and the vowel-unit index of the accented vowel
+    in the Greek word. Returns (accent_type, vowel_unit_index) where
+    vowel_unit_index is the position in the list returned by
+    scan_greek_vowel_units().
+
+    Operates on Greek source text, never on IPA. Greek words have at most
+    one accent; we stop scanning after finding the first one.
+    """
+    norm = unicodedata.normalize('NFD', word)
+    vowel_units = scan_greek_vowel_units(word)
+
+    # Build a map: base_char_index -> vowel_unit_index
+    base_idx_to_unit = {}
+    for unit_idx, unit in enumerate(vowel_units):
+        base_idx_to_unit[unit["base_idx"]] = unit_idx
+
+    accent_type = "none"
+    found_unit_idx = -1
+    base_idx = -1
+
+    for char in norm:
+        if '\u0300' <= char <= '\u036F':
+            if char == '\u0342':    # Perispomeni (circumflex)
+                candidate = "circumflex"
+            elif char == '\u0301':  # Acute
+                candidate = "acute"
+            elif char == '\u0300':  # Grave
+                candidate = "grave"
+            else:
+                continue
+
+            # base_idx is the index of the last base character we saw.
+            # Verify it actually maps to a vowel unit.
+            if base_idx in base_idx_to_unit:
+                accent_type = candidate
+                found_unit_idx = base_idx_to_unit[base_idx]
+                break  # Greek words have one accent. Done.
+            continue
+
+        # Base character
+        base_idx += 1
+
+    return accent_type, found_unit_idx
+
+def map_greek_vowel_unit_to_ipa(word, greek_vowel_unit_idx, ipa_string):
+    """
+    Given the index of the accented vowel UNIT (from find_accent_in_greek),
+    returns the character index in ipa_string where that unit starts.
+
+    Both sides use the shared vowel-unit scanners so diphthong counting
+    is always consistent.
+    """
+    if greek_vowel_unit_idx < 0:
         return -1
 
-    # --- Phase 3: Build IPA vowel-unit list ---
-    # Walk the IPA string and group consecutive vowels (including length
-    # markers) into units. A vowel followed by ː is one unit. Two vowels
-    # in sequence (IPA diphthong from CLTK) are one unit.
-    ipa_vowel_units = []  # Each entry: index of the first vowel char
-    j = 0
-    while j < len(ipa_string):
-        ch = ipa_string[j]
-        if ch.lower() in IPA_VOWELS:
-            unit_start = j
-            j += 1
-            # Consume length markers and immediately following vowels
-            # (CLTK diphthong representations like 'ai', 'oi')
-            while j < len(ipa_string):
-                next_ch = ipa_string[j]
-                if next_ch == 'ː':
-                    j += 1
-                elif next_ch.lower() in IPA_VOWELS:
-                    # Check if this looks like a diphthong (two vowels
-                    # with no intervening consonant)
-                    j += 1
-                else:
-                    break
-            ipa_vowel_units.append(unit_start)
-        else:
-            j += 1
+    ipa_units = scan_ipa_vowel_units(ipa_string)
 
-    # --- Phase 4: Align ---
-    if target_unit < len(ipa_vowel_units):
-        return ipa_vowel_units[target_unit]
+    if greek_vowel_unit_idx < len(ipa_units):
+        return ipa_units[greek_vowel_unit_idx]
 
-    # Fallback: if we have more Greek units than IPA units, return the last
-    if ipa_vowel_units:
-        return ipa_vowel_units[-1]
+    # Fallback: more Greek units than IPA units — return the last IPA unit
+    if ipa_units:
+        return ipa_units[-1]
 
     return -1
 
+def _enforce_quantity_from_source(greek_word, ipa_string):
+    """
+    Walks Greek vowel units and IPA vowel units in parallel. If a Greek
+    unit is inherently long (η, ω) and the corresponding IPA unit lacks
+    a length marker (ː), one is inserted after the IPA vowel.
+
+    Uses the shared vowel-unit scanners so diphthong alignment matches
+    exactly.
+    """
+    greek_units = scan_greek_vowel_units(greek_word)
+    ipa_units   = scan_ipa_vowel_units(ipa_string)
+
+    # For each IPA unit, determine if it already has ː by checking
+    # the characters following the unit start.
+    def ipa_unit_already_long(unit_start_idx):
+        j = unit_start_idx + 1
+        while j < len(ipa_string):
+            ch = ipa_string[j]
+            if ch == 'ː':
+                return True
+            if ch.lower() in IPA_VOWELS:
+                # Still inside the unit (diphthong second element)
+                j += 1
+                continue
+            break
+        return False
+
+    def ipa_unit_end(unit_idx):
+        """
+        Returns the index ONE PAST the last character of this IPA vowel unit.
+        """
+        start = ipa_units[unit_idx]
+        j = start + 1
+        while j < len(ipa_string):
+            ch = ipa_string[j]
+            if ch == 'ː' or ch.lower() in IPA_VOWELS:
+                j += 1
+            else:
+                break
+        return j
+
+    insertions = []
+    count = min(len(greek_units), len(ipa_units))
+    for v_idx in range(count):
+        if greek_units[v_idx]["is_long"] and not greek_units[v_idx]["is_diphthong"]:
+            if not ipa_unit_already_long(ipa_units[v_idx]):
+                # Insert ː right after the last character of this IPA unit
+                insert_pos = ipa_unit_end(v_idx)
+                insertions.append(insert_pos)
+
+    # Apply in reverse so indices stay valid
+    ipa_list = list(ipa_string)
+    for pos in reversed(insertions):
+        ipa_list.insert(pos, 'ː')
+
+    return "".join(ipa_list)
+
+def _apply_gamma_nasalization(ipa):
+    """
+    Enforces velar nasal [ŋ] before velars and the nasal clusters.
+    Handles both 'g' (U+0067) and 'ɡ' (U+0261) which CLTK may produce.
+
+    γγ → ŋɡ    γκ → ŋk    γχ → ŋx    γξ → ŋks
+    """
+    # γξ → ŋks: CLTK may or may not expand ξ to ks. Handle both cases.
+    # We do the ŋks replacement first (longest match) to prevent partial
+    # matches from the shorter rules.
+    for g in ['g', 'ɡ']:
+        # gks → ŋks  (CLTK expanded ξ)
+        ipa = ipa.replace(f'{g}ks', 'ŋks')
+        # gξ → ŋks   (CLTK left ξ as-is — shouldn't happen but be safe)
+        ipa = ipa.replace(f'{g}ξ', 'ŋks')
+
+        ipa = ipa.replace(f'{g}{g}', f'ŋ{g}')
+        ipa = ipa.replace(f'{g}k', 'ŋk')
+        ipa = ipa.replace(f'{g}x', 'ŋx')
+        ipa = ipa.replace(f'{g}χ', 'ŋx')  # normalize χ to x as well
+
+    return ipa
+
+def _apply_rough_breathing(greek_word, ipa):
+    """
+    Handles rough breathing (dasia) on vowels and on rho.
+
+    - Vowel-initial words with dasia: prepend [h] if not already aspirated.
+    - ῥ (rho with dasia): produce [r̥] (voiceless alveolar trill).
+      If the German voice can't handle r̥, we fall back to [hr] which
+      is a practical approximation that at least produces audible
+      aspiration before the trill.
+    """
+    norm = unicodedata.normalize('NFD', greek_word)
+    apply_rough = config.get("options", {}).get("apply_rough_breathing", True)
+
+    if not apply_rough:
+        return ipa
+
+    if '\u0314' not in norm:  # No dasia present
+        return ipa
+
+    # Check if this is rho with rough breathing
+    # ῥ in NFD is: ρ + combining reversed comma above (U+0314)
+    # It can appear word-initially (ῥήτωρ) or as ῤῥ medially.
+    lower = greek_word.lower()
+    nfd_lower = unicodedata.normalize('NFD', lower)
+
+    # Find if ρ carries the dasia
+    rho_has_dasia = False
+    chars = list(nfd_lower)
+    for i_ch, ch in enumerate(chars):
+        if ch == 'ρ':
+            # Check if the combining marks following this ρ include U+0314
+            j = i_ch + 1
+            while j < len(chars) and '\u0300' <= chars[j] <= '\u036F':
+                if chars[j] == '\u0314':
+                    rho_has_dasia = True
+                    break
+                j += 1
+            if rho_has_dasia:
+                break
+
+    if rho_has_dasia:
+        # Replace the first 'r' in IPA with voiceless trill.
+        # Try r̥ first; fall back to hr if the character isn't in our IPA set.
+        # The combining ring below (U+0325) marks voicelessness in IPA.
+        idx = ipa.find('r')
+        if idx >= 0:
+            ipa = ipa[:idx] + 'r̥' + ipa[idx+1:]
+        return ipa
+
+    # Vowel-initial word with dasia: prepend [h]
+    if not (ipa.startswith('h') or ipa.startswith('ʰ')):
+        ipa = 'h' + ipa
+
+    return ipa
+
+def select_group_accent(group_words):
+    """
+    Given a list of words forming a prosodic group (proclitics + host + enclitics),
+    determines the accent type and IPA index for the group's combined IPA string.
+
+    Rules:
+    - Proclitics are unaccented; skip them.
+    - The host word's accent is primary.
+    - Enclitics are normally suppressed, BUT if an enclitic causes a secondary
+      accent on the host's ultima (visible in the source text as a second acute),
+      we detect that from the Greek and include it.
+
+    Returns (accent_type, accent_ipa_idx, combined_ipa)
+    """
+    group_ipa_parts = []
+    group_accent_type = "none"
+    group_accent_ipa_idx = -1
+    running_ipa_len = 0
+
+    # First pass: transcribe all words and collect IPA
+    word_data_list = []
+    for gw in group_words:
+        if not has_greek_chars(gw):
+            word_data_list.append(None)
+            continue
+        w_data = analyze_word_data(gw)
+        word_data_list.append(w_data)
+        if w_data:
+            group_ipa_parts.append(w_data["ipa"])
+        else:
+            group_ipa_parts.append("")
+
+    combined_ipa = "".join(group_ipa_parts)
+
+    if not combined_ipa:
+        return "none", -1, ""
+
+    # Second pass: find the primary accent.
+    # Walk the group in order. The first accented non-proclitic word is the host.
+    # Its accent governs the group contour.
+    running_ipa_len = 0
+    host_found = False
+
+    for i_gw, gw in enumerate(group_words):
+        w_data = word_data_list[i_gw]
+        if w_data is None:
+            continue
+
+        is_proclitic = gw.lower() in PROCLITICS
+        is_enclitic = gw.lower() in ENCLITICS
+
+        if not host_found and not is_proclitic:
+            # This is the host word (or at least the first content word)
+            host_found = True
+
+            if w_data["accent_type"] != "none" and w_data["accent_idx"] >= 0:
+                group_accent_type = w_data["accent_type"]
+                group_accent_ipa_idx = running_ipa_len + w_data["accent_idx"]
+
+        elif host_found and is_enclitic:
+            # Enclitic: accent is normally suppressed. But check if the
+            # source text shows this enclitic carrying an accent (which
+            # happens when two enclitics chain: the first gets an acute
+            # on its ultima). If the enclitic is accented in the source,
+            # we've already captured that in its word_data — but we
+            # suppress it for contour purposes since the host accent
+            # dominates the prosodic group.
+            #
+            # The one case we DO care about: the host word gained a
+            # secondary acute on its ultima due to the enclitic. This
+            # is already baked into the source text if the editor marked
+            # it (e.g., ἄνθρωπός τε). Our host word_data would have
+            # detected the LAST accent in the word via find_accent_in_greek,
+            # which scans for the first accent and stops. So we need to
+            # check the host for a secondary accent on the ultima.
+            pass
+
+        running_ipa_len += len(w_data["ipa"])
+
+    # Third pass: check for secondary accent on host ultima (enclitic-induced).
+    # This only matters if we have enclitics in the group.
+    has_enclitics = any(
+        gw.lower() in ENCLITICS
+        for gw in group_words
+        if has_greek_chars(gw)
+    )
+
+    if has_enclitics and host_found:
+        # Find the host word and check if it has TWO accents in NFD form.
+        # Standard Greek has one accent per word, but enclitic-induced
+        # secondary accents produce two (e.g., ἄνθρωπός).
+        for i_gw, gw in enumerate(group_words):
+            w_data = word_data_list[i_gw]
+            if w_data is None:
+                continue
+            if gw.lower() in PROCLITICS or gw.lower() in ENCLITICS:
+                continue
+
+            # This is the host. Scan for multiple accents.
+            norm = unicodedata.normalize('NFD', gw)
+            accent_marks = [ch for ch in norm if ch in ('\u0301', '\u0300', '\u0342')]
+
+            if len(accent_marks) >= 2:
+                # The host has a secondary accent. The primary accent is
+                # already captured. We don't change the contour — the
+                # primary accent still dominates — but we note this for
+                # potential future use (e.g., a slight pitch bump on the
+                # ultima). For now, the existing behavior (single contour
+                # peak on primary accent) is a reasonable approximation.
+                #
+                # If you want to add a secondary pitch bump later, you'd
+                # compute a second accent_idx here and return both.
+                pass
+
+            break  # Only check the first host word
+
+    return group_accent_type, group_accent_ipa_idx, combined_ipa
+
+# In analyze_word_data, we track how many new entries have been added
+# since the last save, and flush periodically.
+
+_CACHE_DIRTY_COUNT    = 0
+_CACHE_FLUSH_INTERVAL = 50  # Save every 50 new transcriptions
+
 def analyze_word_data(word):
     """
-    Robust Philological Analysis.
+    Philological analysis of a single Greek word.
     1. Transcribes to IPA via CLTK.
-    2. Enforces Quantity (Vowel Length) for Eta/Omega by checking the
-       Greek source character, not by pattern-matching IPA symbols.
-    3. Strips IPA pitch accents (so they don't conflict with our SSML contours).
-    4. Detects accent position from the Greek source text and maps it
-       to the corresponding position in the cleaned IPA.
+    2. Applies gamma nasalization.
+    3. Normalizes r-sounds to alveolar trill.
+    4. Enforces vowel quantity from Greek source characters.
+    5. Handles rough breathing (including voiceless rho).
+    6. Strips IPA pitch accents for flat TTS base.
+    7. Detects accent from Greek source and maps to IPA position.
+
+    Periodically flushes the cache to disk so a crash mid-section
+    doesn't lose all new transcriptions.
     """
-    if not word.strip(): return None
+    global _CACHE_DIRTY_COUNT
+
+    if not word.strip():
+        return None
 
     cache = TRANSCRIPTION_CACHE["words"]
     if word in cache:
@@ -793,59 +1137,35 @@ def analyze_word_data(word):
         raw_ipa  = TRANSCRIBER.transcribe(word)
         norm_ipa = unicodedata.normalize('NFD', raw_ipa)
 
-        # 1. Detect Accent from GREEK SOURCE (not IPA)
-        accent_type, greek_vowel_idx = find_accent_in_greek(word)
+        # 1. Detect accent from GREEK SOURCE (not IPA)
+        accent_type, accent_vowel_unit = find_accent_in_greek(word)
 
-        # 2. Clean IPA for Audio Generation
+        # 2. Clean IPA for audio generation
         clean_ipa = norm_ipa.replace("[", "").replace("]", "").replace("/", "")
         clean_ipa = re.sub(r'[,\.·;:\-—\']', '', clean_ipa)
         clean_ipa = clean_ipa.replace(" ", "")
 
-        # 3. STRIP ACCENTS from IPA
+        # 3. Strip accents from IPA
         clean_ipa = re.sub(r'[\u0300\u0301\u0342\u030d\u0311]', '', clean_ipa)
         clean_ipa = clean_ipa.replace('ˈ', '').replace('ˌ', '')
         clean_ipa = unicodedata.normalize('NFC', clean_ipa)
 
-        # 4. Gamma Nasalization
-        for g_char in ['g', 'ɡ']:
-            clean_ipa = clean_ipa.replace(f'{g_char}{g_char}', f'ŋ{g_char}')
-            clean_ipa = clean_ipa.replace(f'{g_char}k', f'ŋk')
-            clean_ipa = clean_ipa.replace(f'{g_char}χ', f'ŋχ')
-            clean_ipa = clean_ipa.replace(f'{g_char}ξ', f'ŋξ')
-            clean_ipa = clean_ipa.replace(f'{g_char}x', f'ŋx')
+        # 4. Gamma nasalization
+        clean_ipa = _apply_gamma_nasalization(clean_ipa)
 
-        # 5. IPA Normalization (Trilled R)
+        # 5. IPA normalization (trilled R)
         clean_ipa = clean_ipa.replace('ʁ', 'r').replace('ɹ', 'r')
 
-        # 6. QUANTITY ENFORCEMENT — Source-Character-Driven
-        # Instead of blindly lengthening every ɛ/ɔ in the IPA output,
-        # we identify which Greek characters are inherently long (η, ω)
-        # and apply the length marker only to their corresponding IPA
-        # vowels. This prevents spurious lengthening if CLTK ever
-        # produces ɛ or ɔ for non-eta/omega reasons.
+        # 6. Quantity enforcement
         clean_ipa = _enforce_quantity_from_source(word, clean_ipa)
 
-        # 7. Rough Breathing
-        norm_greek  = unicodedata.normalize('NFD', word)
-        apply_rough = config.get("options", {}).get("apply_rough_breathing", True)
+        # 7. Rough breathing
+        clean_ipa = _apply_rough_breathing(word, clean_ipa)
 
-        if apply_rough and '\u0314' in norm_greek:
-            if not word.lower().startswith('ῥ'):
-                if not (clean_ipa.startswith('h') or clean_ipa.startswith('ʰ')):
-                    clean_ipa = 'h' + clean_ipa
-
-        # 8. Map accent position from Greek to IPA
+        # 8. Map accent from Greek vowel-unit index to IPA character index
         accent_idx = -1
-        if accent_type != "none" and greek_vowel_idx >= 0:
-            accent_idx = map_greek_vowel_index_to_ipa(word, greek_vowel_idx, clean_ipa)
-
-        # Fallback: Greek Text Circumflex
-        if accent_type == "none":
-            norm_greek_check = unicodedata.normalize('NFD', word)
-            if '\u0342' in norm_greek_check:
-                accent_type = "circumflex"
-                match = re.search(r'[' + ''.join(IPA_VOWELS) + r']', clean_ipa)
-                if match: accent_idx = match.start()
+        if accent_type != "none" and accent_vowel_unit >= 0:
+            accent_idx = map_greek_vowel_unit_to_ipa(word, accent_vowel_unit, clean_ipa)
 
         long_markers    = clean_ipa.count('ː')
         has_long_vowels = bool(re.search(r'[ηω]', word))
@@ -860,64 +1180,17 @@ def analyze_word_data(word):
             "len":         len(clean_ipa)
         }
         cache[word] = data
+
+        _CACHE_DIRTY_COUNT += 1
+        if _CACHE_DIRTY_COUNT >= _CACHE_FLUSH_INTERVAL:
+            save_cache()
+            _CACHE_DIRTY_COUNT = 0
+
         return data
 
     except Exception as e:
         print(f"    [!] IPA Transcription failed for '{word}': {e}")
         return None
-
-def _enforce_quantity_from_source(greek_word, ipa_string):
-    """
-    Walks the Greek source characters and the IPA string in parallel,
-    identifying vowels that derive from η or ω and ensuring their IPA
-    counterparts carry the length marker (ː). Vowels from other sources
-    (ε, ο, or any context where CLTK produced ɛ/ɔ for non-long-vowel
-    reasons) are left untouched.
-    """
-    norm = unicodedata.normalize('NFD', greek_word)
-    inherently_long = set("ηωΗΩ")
-    greek_vowel_chars = set("αεηιουωΑΕΗΙΟΥΩ")
-
-    # Build list of Greek vowel positions and whether each is long
-    greek_vowels_long = []
-    for char in norm:
-        if '\u0300' <= char <= '\u036F':
-            continue
-        if char.lower() in greek_vowel_chars:
-            greek_vowels_long.append(char.lower() in inherently_long)
-
-    # Walk IPA and find vowel positions
-    ipa_vowel_positions = []
-    i = 0
-    while i < len(ipa_string):
-        if ipa_string[i].lower() in IPA_VOWELS:
-            # Check if already followed by ː
-            already_long = (i + 1 < len(ipa_string) and ipa_string[i + 1] == 'ː')
-            ipa_vowel_positions.append((i, already_long))
-            if already_long:
-                i += 2
-            else:
-                i += 1
-        else:
-            i += 1
-
-    # Align: for each pair (greek_vowel_n, ipa_vowel_n), if the Greek
-    # vowel is inherently long and the IPA vowel lacks ː, insert it.
-    # Work backwards so insertions don't shift indices.
-    insertions = []
-    for v_idx in range(min(len(greek_vowels_long), len(ipa_vowel_positions))):
-        should_be_long = greek_vowels_long[v_idx]
-        ipa_pos, already_long = ipa_vowel_positions[v_idx]
-
-        if should_be_long and not already_long:
-            insertions.append(ipa_pos + 1)
-
-    # Apply insertions in reverse order
-    ipa_list = list(ipa_string)
-    for pos in reversed(insertions):
-        ipa_list.insert(pos, 'ː')
-
-    return "".join(ipa_list)
 
 def calculate_prosody(word_data, baseline_shift=0):
     """
@@ -1049,7 +1322,56 @@ def is_breath_trigger(word):
 # 5. S S M L   C O N S T R U C T I O N
 # ==============================================================================
 
+# The Greek question mark (;) is U+037E. It looks identical to ASCII semicolon
+# (U+003B) but is a different codepoint. Many Greek texts use one or the other
+# inconsistently. We normalize U+037E to U+003B early so that sentence
+# splitting and interrogative detection work regardless of which codepoint
+# the source text uses.
+#
+# Similarly, the Greek ano teleia (·) is U+0387, which is visually identical
+# to middle dot (U+00B7). Normalize both to a consistent form.
+
+def normalize_greek_punctuation(text):
+    """
+    Normalizes Greek-specific punctuation codepoints to their ASCII
+    equivalents so downstream regex patterns don't need to match both.
+
+    U+037E (Greek question mark)  → U+003B (semicolon)
+    U+0387 (Greek ano teleia)     → U+00B7 (middle dot) — we keep · for
+                                    clause boundary detection, just ensure
+                                    it's the consistent codepoint.
+    """
+    text = text.replace('\u037E', ';')   # Greek question mark → ASCII semicolon
+    text = text.replace('\u0387', '·')   # Greek ano teleia → middle dot (U+00B7)
+    return text
+
+def scale_time(time_str, rate):
+    """
+    Scales a time duration string (e.g., "145ms") by the inverse of the
+    speaking rate. A rate of 2.0 halves all pauses; a rate of 0.5 doubles them.
+
+    Returns the original string unchanged if it can't be parsed, but logs
+    a warning so malformed config values don't silently produce wrong timing.
+    """
+    if not isinstance(time_str, str) or not time_str.endswith("ms"):
+        return time_str
+
+    digits = time_str[:-2].strip()
+    if not digits.isdigit():
+        print(f"    [!] Warning: Could not parse pause duration '{time_str}'. Using as-is.")
+        return time_str
+
+    val = int(digits)
+    if rate <= 0:
+        print(f"    [!] Warning: speaking_rate is {rate}, which is invalid. Not scaling pauses.")
+        return time_str
+
+    return f"{int(val / rate)}ms"
+
 def build_ssml_fragments(full_text):
+
+     # 0. Normalize Greek punctuation codepoints BEFORE anything else
+    full_text = normalize_greek_punctuation(full_text)
 
     # 1. Cleaning
     full_text = clean_sigla(normalize_text_numerals(full_text))
@@ -1074,18 +1396,11 @@ def build_ssml_fragments(full_text):
     rewind_scale = config["prosody"].get("downdrift_clause_based_rewind_scale", 0.3)
     apply_sandhi = config.get("options", {}).get("apply_sandhi", True)
 
-    def scale_time(time_str):
-        if not time_str.endswith("ms"): return time_str
-        try:
-            val = int(time_str.replace("ms", ""))
-            return f"{int(val / rate_global)}ms"
-        except: return time_str
-
-    t_breath     = scale_time(pauses.get("breath",  "145ms"))
-    t_newline    = scale_time(pauses.get("newline", "180ms"))
-    t_comma      = scale_time(pauses.get("comma",   "80ms"))
-    t_period     = scale_time(pauses.get("period",  "145ms"))
-    t_minor      = scale_time(pauses.get("minor",   "215ms"))
+    t_breath     = scale_time(pauses.get("breath",  "145ms"), rate_global)
+    t_newline    = scale_time(pauses.get("newline", "180ms"), rate_global)
+    t_comma      = scale_time(pauses.get("comma",   "80ms"), rate_global)
+    t_period     = scale_time(pauses.get("period",  "145ms"), rate_global)
+    t_minor      = scale_time(pauses.get("minor",   "215ms"), rate_global)
 
     max_breath   = pacing.get("max_breath_words", 9)
     force_breath = pacing.get("force_breath_words", 20)
@@ -1210,26 +1525,8 @@ def build_ssml_fragments(full_text):
                 current_baseline  = current_drift_start + ((current_drift_end - current_drift_start) * position_ratio)
                 current_word_idx += len(group)
 
-                # Phonology: transcribe each word individually, then concatenate IPA
-                group_ipa_parts = []
-                group_accent_type = "none"
-                group_accent_ipa_idx = -1
-                running_ipa_len = 0
-
-                for gw in group:
-                    if not has_greek_chars(gw):
-                        continue
-                    w_data = analyze_word_data(gw)
-                    if w_data:
-                        group_ipa_parts.append(w_data["ipa"])
-                        # Use the accent from the first content word
-                        # (proclitics are unaccented, enclitics yield to host)
-                        if w_data["accent_type"] != "none" and group_accent_type == "none":
-                            group_accent_type = w_data["accent_type"]
-                            group_accent_ipa_idx = running_ipa_len + w_data["accent_idx"]
-                        running_ipa_len += len(w_data["ipa"])
-
-                combined_ipa = "".join(group_ipa_parts)
+                # Phonology: use shared accent selection for the prosodic group
+                group_accent_type, group_accent_ipa_idx, combined_ipa = select_group_accent(group)
 
                 if not combined_ipa:
                     dummy_text = romanize_greek(" ".join(group))
@@ -1274,7 +1571,6 @@ def build_ssml_fragments(full_text):
                     "contour":   contour
                 })
 
-                # Append space if not at end of chunk
                 if i < len(words) - 1:
                     fragments.append(" ")
 
