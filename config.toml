@@ -4,6 +4,7 @@ service_account_file = "./service-account.json"
 [tts]
 # CORRECTED NAME: Removed the hyphen between Chirp and 3
 # voice_name = "de-DE-Chirp3-HD-Fenrir"
+# voice_name = "de-DE-Chirp3-HD-Erinome"
 # voice_name = "de-DE-Chirp3-HD-Kore"
 # voice_name = "de-DE-Chirp3-HD-Achernar"
 # voice_name = "de-DE-Chirp3-HD-Orus"
@@ -11,7 +12,8 @@ service_account_file = "./service-account.json"
 # voice_name = "de-DE-Chirp3-HD-Aoede"
 # voice_name = "de-DE-Chirp3-HD-Autonoe"
 # voice_name = "de-DE-Chirp3-HD-Laomedeia"
-voice_name = "de-DE-Chirp3-HD-Enceladus"
+voice_name = "de-DE-Chirp3-HD-Gacrux"
+# voice_name = "de-DE-Chirp3-HD-Enceladus"
 
 # Chirp 3 works best with uncompressed audio (WAV)
 audio_encoding   = "LINEAR16" 
