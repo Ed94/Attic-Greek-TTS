@@ -8,7 +8,7 @@ idk if this is accurate. This was done in an afternoon. Used gemini 3 pro for th
 * **Rhythm Control:** Enforces pauses based on punctuation and verse structure.
 * **Breath System:** Automatically inserts breath pauses in long sentences at grammatically appropriate spots.
 
-The input file can delimit sections with `---`. Each section is it's own mp3. See the [input.txt](./input.txt) to get an idea.
+The input file can delimit sections with `---`. Each section is it's own wav. See the [input.txt](./input.txt) to get an idea.
 
 ## Prerequisites
 
