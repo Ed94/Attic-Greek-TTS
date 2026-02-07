@@ -1,25 +1,25 @@
-[google]
-credentials_path = "./service-account.json"
+[google_cloud]
+service_account_file = "./service-account.json"
 
 [tts]
 # CORRECTED NAME: Removed the hyphen between Chirp and 3
 # voice_name = "en-US-Chirp3-HD-Fenrir"
 # voice_name = "de-DE-Chirp3-HD-Fenrir"
 # voice_name = "en-US-Chirp3-HD-Kore"
-voice_name = "de-DE-Chirp3-HD-Kore"
+# voice_name = "de-DE-Chirp3-HD-Kore"
 # voice_name = "de-DE-Chirp3-HD-Achernar"
-# voice_name = "de-DE-Chirp3-HD-Orus"
+voice_name = "de-DE-Chirp3-HD-Orus"
 # voice_name = "de-DE-Chirp3-HD-Laomedeia"
 
 # Chirp 3 works best with uncompressed audio (WAV)
-audio_encoding = "LINEAR16" 
+audio_encoding   = "LINEAR16" 
 output_extension = "mp3"
-speaking_rate = 0.95
-output_dir = "./output"
-pitch = 0.0
+speaking_rate    = 0.95
+output_dir       = "./output"
+pitch            = 0.0
 
 [files]
-input_text = "input.txt"
+input_text        = "input.txt"
 intermediate_data = "staging_data.json"
 
 [processing]
@@ -27,5 +27,20 @@ intermediate_data = "staging_data.json"
 delimiter = "---"
 
 [cltk]
-dialect = "Attic"
+dialect        = "Attic"
 reconstruction = "Probert" # Probert is generally considered very accurate for Attic
+
+[pauses]
+# Adjust these to change the rhythm of the speech
+comma   = "80ms"  # For , and :
+period  = "145ms" # For . and ; and —
+minor   = "215ms" # For · and -
+newline = "80ms"  # For line breaks (poetry verses)
+skip    = "50ms"  # For skipped non-Greek text (headers/numbers)
+
+[prosody]
+# Adjust these to change the "singing" quality of the polytonic accent
+# The curve goes: Start Low -> Peak at Accent -> End Low
+contour_start = "-2%"
+contour_peak  = "+20%"
+contour_end   = "-10%"
