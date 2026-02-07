@@ -339,7 +339,7 @@ def generate_audio_directly():
         greek_slug = "".join([c for c in text[:40] if has_greek_chars(c) or c.isspace()])
         safe_slug  = sanitize_filename(greek_slug)
         if not safe_slug: safe_slug = f"section_{i+1}"
-        filename    = f"{i+1:02d}_{safe_slug}_{voice_name}.{ext}"
+        filename    = f"{i+1:02d}_{safe_slug}_{voice_name}_{str(rate)}.{ext}"
         output_path = os.path.join(output_dir, filename)
 
         if final_audio_bytes:
