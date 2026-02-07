@@ -289,8 +289,10 @@ def analyze_word_data(word):
         norm_greek  = unicodedata.normalize('NFD', word)
         
         if apply_rough and '\u0314' in norm_greek:
-            if not clean_ipa.startswith('h'):
-                clean_ipa = 'h' + clean_ipa
+            if not word.lower().startswith('ῥ'):
+                # Only prepend 'h' if the IPA doesn't already have 'h' or 'ʰ'
+                if not (clean_ipa.startswith('h') or clean_ipa.startswith('ʰ')):
+                    clean_ipa = 'h' + clean_ipa
 
         accent_type = "none"
         accent_idx  = -1
@@ -429,7 +431,7 @@ def build_ssml_fragments(full_text):
     
     # 4. Split Sentences (Preserving Delimiters)
     sentence_pattern = r'([.;]|\|\|DBL_BRK\|\|)'
-    raw_sentences = re.split(sentence_pattern, full_text)
+    raw_sentences    = re.split(sentence_pattern, full_text)
     
     sentences = []
     for i in range(0, len(raw_sentences)-1, 2):
@@ -471,9 +473,23 @@ def build_ssml_fragments(full_text):
                 continue
             
             words = part.split()
-            for i, word in enumerate(words):
+            
+            # SANDHI / ELISION LOGIC
+            # Use while loop to look ahead and merge words
+            i = 0
+            while i < len(words):
+                word = words[i]
+                
+                # Check for Elision (Sandhi)
+                if apply_sandhi and (word.endswith('᾽') or word.endswith('’') or word.endswith("'")) and i + 1 < len(words):
+                    next_word = words[i+1]
+                    if has_greek_chars(next_word):
+                        word = word + next_word # Merge text for shared prosody
+                        i   += 1 # Skip next word iteration
+                
                 if not has_greek_chars(word): 
                     if word.strip(): fragments.append(word)
+                    i += 1
                     continue
 
                 words_since_breath += 1
@@ -492,39 +508,37 @@ def build_ssml_fragments(full_text):
                 current_word_idx += 1
 
                 # Phonology
-                w_data = analyze_word_data(word)
+                w_data     = analyze_word_data(word)
                 dummy_text = romanize_greek(word)
                 
                 if w_data and dummy_text:
-                    ipa = w_data["ipa"]
+                    ipa               = w_data["ipa"]
                     contour, dur_rate = calculate_prosody(w_data, baseline_shift=current_baseline)
                     
-                    ph_tag = f'<phoneme alphabet="ipa" ph="{ ipa }">{ dummy_text }</phoneme>'
+                    ph_tag     = f'<phoneme alphabet="ipa" ph="{ ipa }">{ dummy_text }</phoneme>'
                     final_ssml = ph_tag
                     
                     if dur_rate != "0%":
                         final_ssml = f'<prosody rate="{dur_rate}">{final_ssml}</prosody>'
-
                     if contour:
                         final_ssml = f'<prosody contour="{contour}">{final_ssml}</prosody>'
                     
                     fragments.append(final_ssml)
                     
                     debug_entries.append({
-                        "greek": word,
-                        "roman": dummy_text,
+                        "greek":     word,
+                        "roman":     dummy_text,
                         "downdrift": int(current_baseline),
-                        "contour": contour
+                        "contour":   contour
                     })
                 else:
                     fragments.append(dummy_text)
                 
-                # --- ELISION (SANDHI) ---
-                # Tunable: Glue words ending in apostrophe
-                if apply_sandhi and (word.endswith('᾽') or word.endswith('’') or word.endswith("'")):
-                    pass 
-                elif i < len(words) - 1: 
+                # Append space if we are not at end of chunk (Sandhi merge logic removed as it is handled above)
+                if i < len(words) - 1: 
                     fragments.append(" ")
+                
+                i += 1
 
     return fragments, debug_entries
 
@@ -539,6 +553,33 @@ def fix_wav_header(wav_bytes):
     subchunk2_size = total_size - 44
     new_header     = wav_bytes[:4] + struct.pack('<I', chunk_size) + wav_bytes[8:40] + struct.pack('<I', subchunk2_size) + wav_bytes[44:]
     return new_header
+
+def extract_wav_payload(wav_bytes):
+    """
+    Parses WAV structure to correctly extract audio data, 
+    independent of header size or extra metadata chunks.
+    """
+    if len(wav_bytes) < 44: return b""
+    try:
+        # Skip RIFF header (12 bytes)
+        pos = 12
+        while pos < len(wav_bytes):
+            # Read Chunk ID (4 bytes)
+            chunk_id = wav_bytes[pos:pos+4]
+            # Read Chunk Size (4 bytes, Little Endian)
+            chunk_size = struct.unpack('<I', wav_bytes[pos+4:pos+8])[0]
+            
+            if chunk_id == b'data':
+                # Return the content of the data chunk
+                return wav_bytes[pos+8 : pos+8+chunk_size]
+            
+            # Move to next chunk
+            pos += 8 + chunk_size
+    except Exception as e:
+        print(f"    -> WAV Parse Warning: {e}")
+    
+    # Fallback to hard slice if parsing fails
+    return wav_bytes[44:]
 
 def fetch_audio_bytes(client, ssml_chunk, voice_params, audio_config):
     synthesis_input = texttospeech.SynthesisInput(ssml=ssml_chunk)
@@ -612,7 +653,7 @@ def generate_audio():
                         final_audio_bytes += chunk_bytes
                     else:
                         if audio_enc == "LINEAR16":
-                            final_audio_bytes += chunk_bytes[44:]
+                            final_audio_bytes += extract_wav_payload(chunk_bytes)
                         else:
                             final_audio_bytes += chunk_bytes
                 print(f"    -> Stitched chunk.")
@@ -628,7 +669,8 @@ def generate_audio():
                     final_audio_bytes += chunk_bytes
                 else:
                     if audio_enc == "LINEAR16":
-                        final_audio_bytes += chunk_bytes[44:]
+                        # Use robust payload extraction
+                        final_audio_bytes += extract_wav_payload(chunk_bytes)
                     else:
                         final_audio_bytes += chunk_bytes
 
