@@ -104,6 +104,7 @@ import unicodedata
 from   cltk.phonology.grc.transcription import Transcriber
 from   google.cloud                     import texttospeech
 
+
 # ==============================================================================
 # 1. C O N F I G U R A T I O N   &   S E T U P
 # ==============================================================================
@@ -284,9 +285,20 @@ def analyze_word_data(word):
         clean_ipa = re.sub(r'[,\.·;:\-—’]', '', clean_ipa)
         clean_ipa = clean_ipa.replace(" ", "")
 
+        norm_greek  = unicodedata.normalize('NFD', word)
+
+        # --- VOWEL LENGTH ENFORCEMENT ---
+        # If Greek has Eta (η) or Omega (ω), force IPA length (ː).
+        if 'η' in word or 'ω' in word or '\u0342' in norm_greek:
+            if 'ː' not in clean_ipa:
+                replacements = {'ɛ': 'ɛː', 'ɔ': 'ɔː', 'e': 'eː', 'o': 'oː'}
+                temp_ipa = []
+                for char in clean_ipa:
+                    temp_ipa.append(replacements.get(char, char))
+                clean_ipa = "".join(temp_ipa)
+
         # --- ROUGH BREATHING (TUNABLE) ---
         apply_rough = config.get("options", {}).get("apply_rough_breathing", True)
-        norm_greek  = unicodedata.normalize('NFD', word)
         
         if apply_rough and '\u0314' in norm_greek:
             if not word.lower().startswith('ῥ'):
@@ -408,6 +420,7 @@ def build_ssml_fragments(full_text):
     pacing       = config.get("pacing", {})
     drift_start  = config["prosody"].get("downdrift_start", 10)
     drift_end    = config["prosody"].get("downdrift_end", -10)
+    rewind_scale = config["prosody"].get("downdrift_clause_based_rewind_scale", 0.3)
     apply_sandhi = config.get("options", {}).get("apply_sandhi", True)
     
     def scale_time(time_str):
@@ -470,6 +483,14 @@ def build_ssml_fragments(full_text):
                 elif part in ['·', '-']: t = t_minor
                 fragments.append(f'<break time="{t}"/>')
                 words_since_breath = 0 
+                
+                # --- CLAUSE-BASED INTONATION RESET ---
+                # Rewind the downdrift logic slightly to "lift" the voice up
+                # after a pause, preventing the end of long sentences from growling.
+                if total_sentence_words > 0:
+                    rewind_amount = int(total_sentence_words * rewind_scale)
+                    current_word_idx = max(0, current_word_idx - rewind_amount)
+
                 continue
             
             words = part.split()

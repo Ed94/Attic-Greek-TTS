@@ -64,6 +64,9 @@ heavy_word_rate     = "-15%" # Speed slowdown for heavy words (e.g. -15%)
 downdrift_start = 10     # Start sentence +10% higher than average
 downdrift_end   = -10    # End sentence -10% lower than average
 
+# Rewind the downdrift logic slightly to "lift" the voice up after a pause, preventing the end of long sentences from growling.
+downdrift_clause_based_rewind_scale = 0.35 
+
 [options]
 apply_sandhi          = true # Glue words ending in apostrophe (ἀλλ᾽ ἐγὼ -> ἀλλ᾽ἐγὼ)
 apply_rough_breathing = true # Pronounce the 'h' (dasia)
