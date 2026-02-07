@@ -431,6 +431,19 @@ LATIN_LETTERS = {
 # This covers both ASCII-range IPA and the open-mid vowels CLTK produces.
 IPA_VOWELS = set("aeiouyɛɔæøəɪʊʏɑɒʌɐɤɯ")
 
+# All codepoints that can mark elision in Greek text.
+# Visually identical but different Unicode characters used by different editors.
+ELISION_MARKS = {
+    '\u1FBD',  # ᾽  GREEK KORONIS
+    '\u1FBF',  # ᾿  GREEK PSILI (smooth breathing, reused as apostrophe)
+    '\u2019',  # '  RIGHT SINGLE QUOTATION MARK
+    '\u0027',  # '  APOSTROPHE (ASCII)
+    '\u02BC',  # ʼ  MODIFIER LETTER APOSTROPHE
+    '\u2018',  # '  LEFT SINGLE QUOTATION MARK (rare but seen)
+}
+def ends_with_elision(word):
+    return bool(word) and word[-1] in ELISION_MARKS
+
 # ==============================================================================
 # 3. T E X T   N O R M A L I Z A T I O N
 # ==============================================================================
@@ -761,7 +774,13 @@ IOTA_SUBSCRIPT = '\u0345'  # combining ypogegrammeni
 
 # IPA diphthong pairs that CLTK actually produces. Only these get merged
 # when scanning IPA vowel units. Anything else is treated as hiatus.
-IPA_DIPHTHONGS = {"ai", "ei", "oi", "au", "eu", "ou", "yi", "ɛi", "ɔi"}
+IPA_DIPHTHONGS = {
+    # Vowel + vowel pairs (kept for safety)
+    "ai", "ei", "oi", "au", "eu", "ou", "yi", "ɛi", "ɔi",
+    # Vowel + semivowel pairs (what CLTK/Probert actually produces)
+    "ɑj", "ej", "oj", "ɛj", "ɔj", "aj", "ij",  # front-closing
+    "ɑw", "ew", "ow", "ɛw", "ɔw", "aw",         # back-closing
+}
 
 # Which Greek vowels are inherently long (for quantity enforcement)
 INHERENTLY_LONG_VOWELS = set("ηωΗΩ")
@@ -868,11 +887,14 @@ def scan_ipa_vowel_units(ipa_string):
     """
     Walks an IPA string and returns a list of vowel unit start indices.
     Consecutive vowels are merged into a single unit ONLY if they form
-    a recognized IPA diphthong (from IPA_DIPHTHONGS). Length markers (ː)
-    are consumed into the preceding unit. Anything else is hiatus —
-    two separate units.
+    a recognized IPA diphthong (from IPA_DIPHTHONGS). Semivowels j/w
+    are merged when they form a recognized diphthong with the preceding
+    vowel. Length markers (ː) are consumed into the preceding unit.
+    Anything else is hiatus — two separate units.
     """
-    units = []  # each entry is the index of the first vowel char in the unit
+    IPA_DIPHTHONG_SECONDS = IPA_VOWELS | {'j', 'w'}
+
+    units = []
     i = 0
 
     while i < len(ipa_string):
@@ -889,62 +911,55 @@ def scan_ipa_vowel_units(ipa_string):
         if i < len(ipa_string) and ipa_string[i] == 'ː':
             i += 1
 
-        # Check for a recognized diphthong: current vowel + next vowel
-        if i < len(ipa_string) and ipa_string[i].lower() in IPA_VOWELS:
+        # Check for a recognized diphthong: current vowel + next vowel/semivowel
+        if i < len(ipa_string) and ipa_string[i].lower() in IPA_DIPHTHONG_SECONDS:
             pair = ipa_string[unit_start].lower() + ipa_string[i].lower()
             if pair in IPA_DIPHTHONGS:
                 i += 1
                 # Consume trailing length marker on diphthong
                 if i < len(ipa_string) and ipa_string[i] == 'ː':
                     i += 1
-            # else: hiatus — don't consume, let the next iteration pick it up
+            # else: hiatus — don't consume
 
         units.append(unit_start)
 
     return units
 
 def find_accent_in_greek(word):
-    """
-    Finds the accent type and the vowel-unit index of the accented vowel
-    in the Greek word. Returns (accent_type, vowel_unit_index) where
-    vowel_unit_index is the position in the list returned by
-    scan_greek_vowel_units().
-
-    Operates on Greek source text, never on IPA. Greek words have at most
-    one accent; we stop scanning after finding the first one.
-    """
     norm = unicodedata.normalize('NFD', word)
     vowel_units = scan_greek_vowel_units(word)
 
     # Build a map: base_char_index -> vowel_unit_index
+    # For diphthongs, BOTH the first and second element's base indices
+    # must map to the same unit, because the accent combining mark may
+    # attach to either element (e.g., οῦ has perispomeni on υ, not ο).
     base_idx_to_unit = {}
     for unit_idx, unit in enumerate(vowel_units):
         base_idx_to_unit[unit["base_idx"]] = unit_idx
+        if unit["is_diphthong"]:
+            base_idx_to_unit[unit["base_idx"] + 1] = unit_idx
 
     accent_type = "none"
     found_unit_idx = -1
     base_idx = -1
 
     for char in norm:
-        if '\u0300' <= char <= '\u036F':
-            if char == '\u0342':    # Perispomeni (circumflex)
+        if '\u0300' <= char <= '\u036F' or char == IOTA_SUBSCRIPT:
+            if char == '\u0342':
                 candidate = "circumflex"
-            elif char == '\u0301':  # Acute
+            elif char == '\u0301':
                 candidate = "acute"
-            elif char == '\u0300':  # Grave
+            elif char == '\u0300':
                 candidate = "grave"
             else:
                 continue
 
-            # base_idx is the index of the last base character we saw.
-            # Verify it actually maps to a vowel unit.
             if base_idx in base_idx_to_unit:
                 accent_type = candidate
                 found_unit_idx = base_idx_to_unit[base_idx]
-                break  # Greek words have one accent. Done.
+                break
             continue
 
-        # Base character
         base_idx += 1
 
     return accent_type, found_unit_idx
@@ -1051,23 +1066,23 @@ def _enforce_quantity_from_source(greek_word, ipa_string):
 def _apply_gamma_nasalization(ipa):
     """
     Enforces velar nasal [ŋ] before velars and the nasal clusters.
-    Handles both 'g' (U+0067) and 'ɡ' (U+0261) which CLTK may produce.
-
-    γγ → ŋɡ    γκ → ŋk    γχ → ŋx    γξ → ŋks
+    Also corrects CLTK's over-nasalization of γ before non-velars
+    (γν, γμ, γλ) back to [g].
     """
-    # γξ → ŋks: CLTK may or may not expand ξ to ks. Handle both cases.
-    # We do the ŋks replacement first (longest match) to prevent partial
-    # matches from the shorter rules.
     for g in ['g', 'ɡ']:
-        # gks → ŋks  (CLTK expanded ξ)
         ipa = ipa.replace(f'{g}ks', 'ŋks')
-        # gξ → ŋks   (CLTK left ξ as-is — shouldn't happen but be safe)
         ipa = ipa.replace(f'{g}ξ', 'ŋks')
-
         ipa = ipa.replace(f'{g}{g}', f'ŋ{g}')
         ipa = ipa.replace(f'{g}k', 'ŋk')
         ipa = ipa.replace(f'{g}x', 'ŋx')
-        ipa = ipa.replace(f'{g}χ', 'ŋx')  # normalize χ to x as well
+        ipa = ipa.replace(f'{g}χ', 'ŋx')
+
+    # CLTK over-nasalizes γ before non-velar consonants.
+    # γν → [gn], γμ → [gm], γλ → [gl] — not nasal assimilation contexts.
+    # Must run AFTER the velar rules above so we don't undo legitimate ŋ.
+    ipa = ipa.replace('ŋn', 'gn')
+    ipa = ipa.replace('ŋm', 'gm')
+    ipa = ipa.replace('ŋl', 'gl')
 
     return ipa
 
@@ -1157,7 +1172,6 @@ def select_group_accent(group_words):
     group_accent_ipa_idx = -1
     running_ipa_len = 0
 
-    # First pass: transcribe all words and collect IPA
     word_data_list = []
     for gw in group_words:
         if not has_greek_chars(gw):
@@ -1175,9 +1189,6 @@ def select_group_accent(group_words):
     if not combined_ipa:
         return "none", -1, ""
 
-    # Second pass: find the primary accent.
-    # Walk the group in order. The first accented non-proclitic word is the host.
-    # Its accent governs the group contour.
     running_ipa_len = 0
     host_found = False
 
@@ -1188,7 +1199,15 @@ def select_group_accent(group_words):
 
         is_proclitic = gw.lower() in PROCLITICS
 
-        if not host_found and not is_proclitic:
+        # Elided words (δ᾽, ἀλλ᾽, καθ᾽, etc.) without an accent
+        # are not hosts — they are phonologically dependent fragments.
+        # Skip them like proclitics so the next accented word governs.
+        is_elided_unaccented = (
+            w_data["accent_type"] == "none" and
+            ends_with_elision(gw)
+        )
+
+        if not host_found and not is_proclitic and not is_elided_unaccented:
             host_found = True
 
             if w_data["accent_type"] != "none" and w_data["accent_idx"] >= 0:
@@ -1230,8 +1249,6 @@ def analyze_word_data(word):
     Periodically flushes the cache to disk so a crash mid-section
     doesn't lose all new transcriptions.
     """
-    global _CACHE_DIRTY_COUNT
-
     if not word.strip():
         return None
 
@@ -1613,7 +1630,7 @@ def build_ssml_fragments(full_text):
                     next_word = words[i+1]
                     if not has_greek_chars(next_word): break
 
-                    if apply_sandhi and (group[-1].endswith('᾽') or group[-1].endswith('\u2019') or group[-1].endswith("'")):
+                    if apply_sandhi and ends_with_elision(group[-1]):
                         i += 1
                         group.append(words[i])
                         merged = True
@@ -2052,7 +2069,88 @@ def generate_audio():
 
 if __name__ == "__main__":
     try:
+        # test_words = ["τῇ", "ᾄδω", "τῷ", "ᾅδης", "ᾳ", "λόγῳ", "τιμῇ", "ᾠδή"]
+        # for w in test_words:
+        #     raw = TRANSCRIBER.transcribe(w)
+        #     print(f"  {w:>10}  →  {raw}")
+
+        # print('\n\n')
+        # test_words = ["εἰμί", "οὐρανός", "εἶπον", "οὗτος", "βουλή", "λείπω", "πιστεύω", "δοῦλος"]
+        # for w in test_words:
+        #     raw = TRANSCRIBER.transcribe(w)
+        #     print(f"  {w:>12}  →  {raw}")
+
+        # print(TRANSCRIBER.transcribe("γνωστόν"))
+
+        # print('\n\n')
+        # word = "τοιοῦτον"
+        # norm = unicodedata.normalize('NFD', word)
+        # for i, ch in enumerate(norm):
+        #     print(f"  {i}: U+{ord(ch):04X} {unicodedata.name(ch, '???')}")
+        # print()
+        # print(find_accent_in_greek(word))
+
+        # print('\n\n')
+        # test = ["τοιοῦτον", "κατανοεῖς", "λεῖα", "τοῖς", "ἐγώ", "οὕτω", "τοῦτο"]
+        # for w in test:
+        #     atype, aunit = find_accent_in_greek(w)
+        #     print(f"  {w:>12}  accent=({atype}, unit={aunit})")
+
+        # test = ["γνωστόν", "γνώμη", "γνῶθι", "γίγνομαι", "γνήσιος", "ἀγνοέω"]
+        # for w in test:
+        #     wdata = analyze_word_data(w)
+        #     print(f"  {w:>12}  raw={TRANSCRIBER.transcribe(w):20s}  corrected={wdata['ipa']}")
+
+        # w = "τοίνυν"
+        # atype, aunit = find_accent_in_greek(w)
+        # print(f"  accent=({atype}, unit={aunit})")
+        # norm = unicodedata.normalize('NFD', w)
+        # for i, ch in enumerate(norm):
+        #     print(f"  {i}: U+{ord(ch):04X} {unicodedata.name(ch, '???')}")
+
         generate_audio()
+
+        # import json
+        # with open("debug_dump.json", "r", encoding="utf-8") as f:
+        #     data = json.load(f)
+
+        # for section in data:
+        #     for entry in section.get("analysis", []):
+        #         if entry.get("accent") == "none" and entry.get("greek", "").strip():
+        #             print(f"  Section {section.get('section')}: {entry['greek']:>20s}  ipa={entry['ipa']}")
+        #     for entry in data[7]["analysis"]:  # section 8, zero-indexed
+        #         if "καθ" in entry.get("greek", ""):
+        #             print(f"  {entry['greek']:>25s}  accent={entry['accent']}  contour={entry.get('contour', 'none')}")
+
+        # word = "καθ᾽"
+        # for i, ch in enumerate(word):
+        #     print(f"  {i}: U+{ord(ch):04X} {unicodedata.name(ch, '???')}")
+
+        # print(config.get("options", {}).get("apply_sandhi", True))
+
+        # test = "καθ᾽ ἕκαστον"
+        # words = test.split()
+        # print(f"  words: {words}")
+        # print(f"  endswith check: {words[0].endswith(chr(0x1FBD))}")
+        # print(f"  repr: {repr(words[0])}")
+
+        # input_path = config["files"].get("input_text", "input.txt")
+        # delimiter = config["processing"].get("delimiter", "---")
+        # with open(input_path, "r", encoding="utf-8") as f:
+        #     content = f.read()
+        # sections = [s.strip() for s in content.split(delimiter) if s.strip()]
+        # text = sections[7]  # section 8, zero-indexed
+
+        # # Find all καθ contexts
+        # for line in text.split('\n'):
+        #     if 'καθ' in line:
+        #         print(f"  {repr(line)}")
+
+        # line = "καθ᾿ ὑποκειμένου"
+        # word = line.split()[0]
+        # for i, ch in enumerate(word):
+        #     print(f"  {i}: U+{ord(ch):04X} {unicodedata.name(ch, '???')}")
+
     except KeyboardInterrupt:
         save_cache()
         print("\n:: Interrupted. Cache saved.")
