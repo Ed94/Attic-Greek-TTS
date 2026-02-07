@@ -409,6 +409,7 @@ GREEK_NUM_BASICS = {
     17: "ἑπτακαίδεκα", 18: "ὀκτωκαίδεκα", 19: "ἐννεακαίδεκα", 20: "εἴκοσι"
 }
 GREEK_TENS = {
+    20: "εἴκοσι",
     30: "τριάκοντα",  40: "τεσσαράκοντα", 50: "πεντήκοντα", 60: "ἑξήκοντα",
     70: "ἑβδομήκοντα",80: "ὀγδοήκοντα",   90: "ἐνενήκοντα"
 }
@@ -428,7 +429,7 @@ LATIN_LETTERS = {
 
 # IPA vowel characters used for accent detection and syllable counting.
 # This covers both ASCII-range IPA and the open-mid vowels CLTK produces.
-IPA_VOWELS = set("aeiouyɛɔæøəɪʊʏ")
+IPA_VOWELS = set("aeiouyɛɔæøəɪʊʏɑɒʌɐɤɯ")
 
 # ==============================================================================
 # 3. T E X T   N O R M A L I Z A T I O N
@@ -450,18 +451,12 @@ def number_to_greek(n):
         if n == 0: return " ".join(words)
         words.append("καὶ")
     if n >= 20:
-        if n in GREEK_NUM_BASICS:
-            words.append(GREEK_NUM_BASICS[n])
-        elif n in GREEK_TENS:
-            words.append(GREEK_TENS[n])
-        else:
-            tens  = (n // 10) * 10
-            units = n % 10
-            if tens == 20: words.append(GREEK_NUM_BASICS[20])
-            else:          words.append(GREEK_TENS.get(tens, ""))
-            if units > 0:
-                words.append("καὶ")
-                words.append(GREEK_NUM_BASICS.get(units, ""))
+        tens  = (n // 10) * 10
+        units = n % 10
+        words.append(GREEK_TENS.get(tens, ""))
+        if units > 0:
+            words.append("καὶ")
+            words.append(GREEK_NUM_BASICS.get(units, ""))
     elif n > 0:
         words.append(GREEK_NUM_BASICS.get(n, ""))
     return " ".join([w for w in words if w])
@@ -762,6 +757,8 @@ GREEK_VOWEL_CHARS = set("αεηιουωΑΕΗΙΟΥΩ")
 GREEK_DIPHTHONG_SECONDS = set("ιυΙΥ")
 GREEK_DIPHTHONGS = {"αι", "ει", "οι", "αυ", "ευ", "ου", "ηυ", "υι"}
 
+IOTA_SUBSCRIPT = '\u0345'  # combining ypogegrammeni
+
 # IPA diphthong pairs that CLTK actually produces. Only these get merged
 # when scanning IPA vowel units. Anything else is treated as hiatus.
 IPA_DIPHTHONGS = {"ai", "ei", "oi", "au", "eu", "ou", "yi", "ɛi", "ɔi"}
@@ -782,6 +779,14 @@ def scan_greek_vowel_units(word):
 
     Diphthongs (αι, ει, οι, αυ, ευ, ου, ηυ, υι) are collapsed into single
     units. Diaeresis (U+0308) on the second element breaks the diphthong.
+
+    Iota subscript (U+0345, combining ypogegrammeni) is absorbed into the
+    preceding vowel unit. In NFD, ᾳ decomposes to α + U+0345. This is NOT
+    a separate vowel — it's a historical long diphthong element. We consume
+    it as part of the combining mark stream so it never creates a phantom
+    vowel unit that would break Greek-to-IPA alignment. The unit is marked
+    as a diphthong (since it historically was one) but the is_long flag
+    comes from the base vowel (η/ω), not from the subscript.
     """
     norm = unicodedata.normalize('NFD', word)
     chars = list(norm)
@@ -792,8 +797,8 @@ def scan_greek_vowel_units(word):
     while i < len(chars):
         char = chars[i]
 
-        # Skip combining marks
-        if '\u0300' <= char <= '\u036F':
+        # Skip combining marks (including iota subscript in the combining range)
+        if '\u0300' <= char <= '\u036F' or char == IOTA_SUBSCRIPT:
             i += 1
             continue
 
@@ -810,18 +815,34 @@ def scan_greek_vowel_units(word):
             "char":         char.lower(),
         }
 
-        # Look ahead past combining marks for a potential diphthong second element
+        # Consume combining marks after this vowel, watching for iota subscript
         j = i + 1
-        while j < len(chars) and '\u0300' <= chars[j] <= '\u036F':
+        has_iota_subscript = False
+        while j < len(chars) and ('\u0300' <= chars[j] <= '\u036F' or chars[j] == IOTA_SUBSCRIPT):
+            if chars[j] == IOTA_SUBSCRIPT:
+                has_iota_subscript = True
             j += 1
 
+        if has_iota_subscript:
+            # ᾳ, ῃ, ῳ — historically long diphthongs. Mark as diphthong
+            # so the unit count matches what CLTK produces (CLTK may or
+            # may not render the subscript as a vowel element — if it does,
+            # this unit absorbs it; if it doesn't, we still have the correct
+            # unit count because no phantom unit was created).
+            unit["is_diphthong"] = True
+            units.append(unit)
+            i = j
+            continue
+
+        # Look ahead past combining marks for a potential diphthong second element
+        # (j is already positioned past combining marks from the scan above)
         if j < len(chars) and chars[j].lower() in GREEK_DIPHTHONG_SECONDS:
             pair = char.lower() + chars[j].lower()
             if pair in GREEK_DIPHTHONGS:
                 # Check for diaeresis on the second element, which breaks the diphthong
                 has_diaeresis = False
                 for k in range(j + 1, len(chars)):
-                    if '\u0300' <= chars[k] <= '\u036F':
+                    if '\u0300' <= chars[k] <= '\u036F' or chars[k] == IOTA_SUBSCRIPT:
                         if chars[k] == '\u0308':
                             has_diaeresis = True
                             break
@@ -834,12 +855,12 @@ def scan_greek_vowel_units(word):
                     # Advance past the second vowel and its combining marks
                     base_idx += 1
                     i = j + 1
-                    while i < len(chars) and '\u0300' <= chars[i] <= '\u036F':
+                    while i < len(chars) and ('\u0300' <= chars[i] <= '\u036F' or chars[i] == IOTA_SUBSCRIPT):
                         i += 1
                     continue
 
         units.append(unit)
-        i += 1
+        i = j  # skip past combining marks we already scanned
 
     return units
 
@@ -1182,8 +1203,18 @@ def select_group_accent(group_words):
 # In analyze_word_data, we track how many new entries have been added
 # since the last save, and flush periodically.
 
-_CACHE_DIRTY_COUNT    = 0
-_CACHE_FLUSH_INTERVAL = 50  # Save every 50 new transcriptions
+class _CacheFlushTracker:
+    def __init__(self, interval=50):
+        self.dirty_count = 0
+        self.interval = interval
+
+    def mark_dirty(self):
+        self.dirty_count += 1
+        if self.dirty_count >= self.interval:
+            save_cache()
+            self.dirty_count = 0
+
+_cache_tracker = _CacheFlushTracker()
 
 def analyze_word_data(word):
     """
@@ -1221,46 +1252,62 @@ def analyze_word_data(word):
         clean_ipa = clean_ipa.replace(" ", "")
 
         # 3. Strip accents from IPA
-        clean_ipa = re.sub(r'[\u0300\u0301\u0342\u030d\u0311]', '', clean_ipa)
+        clean_ipa = re.sub(r'[\u0300-\u036F]', '', clean_ipa)
         clean_ipa = clean_ipa.replace('ˈ', '').replace('ˌ', '')
         clean_ipa = unicodedata.normalize('NFC', clean_ipa)
 
         # 4. Gamma nasalization
+        corrections = []
+
+        before = clean_ipa
         clean_ipa = _apply_gamma_nasalization(clean_ipa)
+        if clean_ipa != before: corrections.append("gamma_nasal")
 
         # 5. IPA normalization (trilled R)
+        before = clean_ipa
         clean_ipa = clean_ipa.replace('ʁ', 'r').replace('ɹ', 'r')
+        if clean_ipa != before: corrections.append("r_normalization")
 
         # 6. Quantity enforcement
+        before = clean_ipa
         clean_ipa = _enforce_quantity_from_source(word, clean_ipa)
+        if clean_ipa != before: corrections.append("quantity_enforcement")
 
         # 7. Rough breathing
+        before = clean_ipa
         clean_ipa = _apply_rough_breathing(word, clean_ipa)
+        if clean_ipa != before: corrections.append("rough_breathing")
 
         # 8. Map accent from Greek vowel-unit index to IPA character index
         accent_idx = -1
         if accent_type != "none" and accent_vowel_unit >= 0:
             accent_idx = map_greek_vowel_unit_to_ipa(word, accent_vowel_unit, clean_ipa)
 
+        greek_unit_count = len(scan_greek_vowel_units(word))
+        ipa_unit_count   = len(scan_ipa_vowel_units(clean_ipa))
+
         long_markers    = clean_ipa.count('ː')
         has_long_vowels = bool(re.search(r'[ηω]', word))
         is_heavy        = long_markers > 0 or has_long_vowels
 
         data = {
-            "raw_ipa":     raw_ipa,
-            "ipa":         clean_ipa,
-            "accent_type": accent_type,
-            "accent_idx":  accent_idx,
-            "is_heavy":    is_heavy,
-            "len":         len(clean_ipa)
+            "raw_ipa":          raw_ipa,
+            "ipa":              clean_ipa,
+            "accent_type":      accent_type,
+            "accent_idx":       accent_idx,
+            "accent_unit":      accent_vowel_unit,
+            "greek_vowel_units": greek_unit_count,
+            "ipa_vowel_units":  ipa_unit_count,
+            "corrections":      corrections,
+            "is_heavy":         is_heavy,
+            "len":              len(clean_ipa)
         }
+
+        if greek_unit_count != ipa_unit_count:
+            print(f"    [!] Vowel unit mismatch: '{word}' greek={greek_unit_count} ipa={ipa_unit_count} raw={raw_ipa}")
+
         cache[word] = data
-
-        _CACHE_DIRTY_COUNT += 1
-        if _CACHE_DIRTY_COUNT >= _CACHE_FLUSH_INTERVAL:
-            save_cache()
-            _CACHE_DIRTY_COUNT = 0
-
+        _cache_tracker.mark_dirty()
         return data
 
     except Exception as e:
@@ -1347,16 +1394,24 @@ def calculate_prosody(word_data, baseline_shift=0):
     if idx >= 0 and total > 0:
 
         if a_type == "circumflex":
-            # The rise-fall must complete within the accented syllable.
-            # The tail ends at the syllable boundary, not at a fixed
-            # offset from the peak.
-            tail_pct = min(peak_pct + max(syllable_duration_pct // 2, 8), 100)
-            contour = (
-                f"(0%,{p(val_start)}) "
-                f"({peak_pct}%,{p(val_peak)}) "
-                f"({tail_pct}%,{p(val_end)}) "
-                f"(100%,{p(val_end)})"
-            )
+            if num_syllables <= 1:
+                # Monosyllable circumflex: tight rise-fall within the single vowel.
+                # Peak early, fall by ~65% of the word. No room to spread.
+                contour = (
+                    f"(0%,{p(val_start)}) "
+                    f"(25%,{p(val_peak)}) "
+                    f"(65%,{p(val_end)}) "
+                    f"(100%,{p(val_end)})"
+                )
+            else:
+                # Polysyllabic: fall bounded by the accented syllable's duration.
+                tail_pct = min(peak_pct + max(syllable_duration_pct // 2, 8), 100)
+                contour = (
+                    f"(0%,{p(val_start)}) "
+                    f"({peak_pct}%,{p(val_peak)}) "
+                    f"({tail_pct}%,{p(val_end)}) "
+                    f"(100%,{p(val_end)})"
+                )
 
         elif a_type == "grave":
             contour = (
@@ -1558,24 +1613,21 @@ def build_ssml_fragments(full_text):
                     next_word = words[i+1]
                     if not has_greek_chars(next_word): break
 
-                    if apply_sandhi and (word.endswith('᾽') or word.endswith('\u2019') or word.endswith("'")):
+                    if apply_sandhi and (group[-1].endswith('᾽') or group[-1].endswith('\u2019') or group[-1].endswith("'")):
                         i += 1
-                        word = words[i]
-                        group.append(word)
+                        group.append(words[i])
                         merged = True
                         continue
 
                     if group[0].lower() in PROCLITICS and len(group) == 1:
                         i += 1
-                        word = words[i]
-                        group.append(word)
+                        group.append(words[i])
                         merged = True
                         continue
 
                     if next_word.lower() in ENCLITICS:
                         i += 1
-                        word = words[i]
-                        group.append(word)
+                        group.append(words[i])
                         merged = True
                         continue
 
