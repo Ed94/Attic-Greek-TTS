@@ -448,6 +448,7 @@ def number_to_greek(n):
         words.append(GREEK_HUNDREDS.get(hundreds, ""))
         n %= 100
         if n == 0: return " ".join(words)
+        words.append("καὶ")
     if n >= 20:
         if n in GREEK_NUM_BASICS:
             words.append(GREEK_NUM_BASICS[n])
@@ -458,7 +459,9 @@ def number_to_greek(n):
             units = n % 10
             if tens == 20: words.append(GREEK_NUM_BASICS[20])
             else:          words.append(GREEK_TENS.get(tens, ""))
-            if units > 0:  words.append(GREEK_NUM_BASICS.get(units, ""))
+            if units > 0:
+                words.append("καὶ")
+                words.append(GREEK_NUM_BASICS.get(units, ""))
     elif n > 0:
         words.append(GREEK_NUM_BASICS.get(n, ""))
     return " ".join([w for w in words if w])
@@ -653,6 +656,102 @@ def sanitize_filename(text):
 # ==============================================================================
 # 4. P H O N O L O G Y   &   P R O S O D Y
 # ==============================================================================
+
+def audit_ipa_diphthongs(word_list=None):
+    """
+    Scans CLTK transcription output for adjacent vowel pairs to discover
+    which IPA diphthong combinations actually occur in practice. Run this
+    against a representative word list and compare against IPA_DIPHTHONGS.
+
+    If word_list is None, uses a built-in set of test words covering all
+    Greek diphthongs in various positions (initial, medial, final) and
+    potential hiatus contexts.
+
+    Prints a report of all observed adjacent-vowel pairs and flags any
+    that are NOT in the current IPA_DIPHTHONGS whitelist.
+    """
+    if word_list is None:
+        word_list = [
+            # Standard diphthongs
+            "αἴξ", "αὐτός", "εἶπον", "εὑρίσκω", "οἶκος", "οὐρανός",
+            "ηὗρον", "υἱός",
+            # Diphthongs before vowels
+            "αἰεί", "οἰόμενος", "αὐαίνω",
+            # Potential hiatus (NOT diphthongs)
+            "ἀοιδός", "θέατρον", "ποιέω", "βοάω", "ἐάω", "νέος",
+            "ἡρωίς",  # diaeresis-like: ω + ι across morpheme boundary
+            # Long vowels that might confuse
+            "ψυχή", "δῶρον", "μῆνις", "τιμή",
+            # Rho and breathing contexts
+            "ῥήτωρ", "ῥυθμός",
+            # Tricky clusters
+            "πραῦς", "γεῦσις", "πνεῦμα",
+            # Words with ου that map to single /uː/ vs diphthong
+            "βουλή", "μοῦσα", "νοῦς",
+        ]
+
+    observed_pairs = {}  # pair_string -> list of source words
+    unwhitelisted = {}
+
+    for word in word_list:
+        try:
+            raw_ipa = TRANSCRIBER.transcribe(word)
+        except Exception as e:
+            print(f"  [!] Failed to transcribe '{word}': {e}")
+            continue
+
+        clean = unicodedata.normalize('NFD', raw_ipa)
+        clean = clean.replace("[", "").replace("]", "").replace("/", "")
+        clean = re.sub(r'[\u0300\u0301\u0342\u030d\u0311]', '', clean)
+        clean = clean.replace('ˈ', '').replace('ˌ', '')
+        clean = unicodedata.normalize('NFC', clean)
+        clean = clean.replace(' ', '')
+
+        # Scan for adjacent vowel pairs
+        i = 0
+        while i < len(clean) - 1:
+            ch = clean[i]
+            if ch.lower() in IPA_VOWELS:
+                j = i + 1
+                # Skip length marker
+                if j < len(clean) and clean[j] == 'ː':
+                    j += 1
+                if j < len(clean) and clean[j].lower() in IPA_VOWELS:
+                    pair = ch.lower() + clean[j].lower()
+                    if pair not in observed_pairs:
+                        observed_pairs[pair] = []
+                    observed_pairs[pair].append((word, clean))
+
+                    if pair not in IPA_DIPHTHONGS:
+                        if pair not in unwhitelisted:
+                            unwhitelisted[pair] = []
+                        unwhitelisted[pair].append((word, clean))
+            i += 1
+
+    print("\n=== IPA Diphthong Audit ===")
+    print(f"\nObserved adjacent vowel pairs ({len(observed_pairs)} unique):")
+    for pair in sorted(observed_pairs.keys()):
+        in_wl = "✓" if pair in IPA_DIPHTHONGS else "✗ NOT WHITELISTED"
+        examples = ", ".join(f"{w}→{ipa}" for w, ipa in observed_pairs[pair][:3])
+        print(f"  {pair}  {in_wl}  ({examples})")
+
+    if unwhitelisted:
+        print(f"\n⚠ {len(unwhitelisted)} pairs found that are NOT in IPA_DIPHTHONGS:")
+        for pair in sorted(unwhitelisted.keys()):
+            examples = ", ".join(f"{w}→{ipa}" for w, ipa in unwhitelisted[pair][:3])
+            print(f"  {pair}  ({examples})")
+        print("\nReview these. If they are true diphthongs in CLTK output,")
+        print("add them to IPA_DIPHTHONGS. If they are hiatus, leave them out.")
+    else:
+        print("\n✓ All observed pairs are in the whitelist.")
+
+    # Also check: are there whitelisted pairs that never appeared?
+    never_seen = IPA_DIPHTHONGS - set(observed_pairs.keys())
+    if never_seen:
+        print(f"\nWhitelisted pairs never observed in test corpus: {never_seen}")
+        print("These may be dead entries, or the test corpus needs expansion.")
+
+    return observed_pairs, unwhitelisted
 
 # ==============================================================================
 # Shared vowel-unit scanner — used by accent mapping, quantity enforcement,
@@ -857,14 +956,17 @@ def _enforce_quantity_from_source(greek_word, ipa_string):
     unit is inherently long (η, ω) and the corresponding IPA unit lacks
     a length marker (ː), one is inserted after the IPA vowel.
 
+    Diphthongs with a short first element (αι, ει, etc.) are skipped —
+    their length is positional, not inherent, and CLTK handles them.
+    Diphthongs with an inherently long first element (ηυ) DO get length
+    enforcement, preserving the distinction from short-first diphthongs.
+
     Uses the shared vowel-unit scanners so diphthong alignment matches
     exactly.
     """
     greek_units = scan_greek_vowel_units(greek_word)
     ipa_units   = scan_ipa_vowel_units(ipa_string)
 
-    # For each IPA unit, determine if it already has ː by checking
-    # the characters following the unit start.
     def ipa_unit_already_long(unit_start_idx):
         j = unit_start_idx + 1
         while j < len(ipa_string):
@@ -872,7 +974,6 @@ def _enforce_quantity_from_source(greek_word, ipa_string):
             if ch == 'ː':
                 return True
             if ch.lower() in IPA_VOWELS:
-                # Still inside the unit (diphthong second element)
                 j += 1
                 continue
             break
@@ -895,13 +996,31 @@ def _enforce_quantity_from_source(greek_word, ipa_string):
     insertions = []
     count = min(len(greek_units), len(ipa_units))
     for v_idx in range(count):
-        if greek_units[v_idx]["is_long"] and not greek_units[v_idx]["is_diphthong"]:
-            if not ipa_unit_already_long(ipa_units[v_idx]):
-                # Insert ː right after the last character of this IPA unit
-                insert_pos = ipa_unit_end(v_idx)
-                insertions.append(insert_pos)
+        gu = greek_units[v_idx]
 
-    # Apply in reverse so indices stay valid
+        # Skip units that aren't inherently long
+        if not gu["is_long"]:
+            continue
+
+        # For diphthongs: only enforce if the first element is inherently long.
+        # is_long is set from the first vowel character, so ηυ has is_long=True
+        # and αυ has is_long=False. This check is already correct — but we
+        # need to NOT skip diphthongs entirely when they are long.
+
+        if ipa_unit_already_long(ipa_units[v_idx]):
+            continue
+
+        # Insert ː right after the first vowel of the IPA unit (before
+        # the diphthong's second element, if present). For monophthongs
+        # this goes after the vowel. For ηυ → eːu rather than euː.
+        if gu["is_diphthong"]:
+            # Length marker goes after the first vowel character only
+            insert_pos = ipa_units[v_idx] + 1
+        else:
+            insert_pos = ipa_unit_end(v_idx)
+
+        insertions.append(insert_pos)
+
     ipa_list = list(ipa_string)
     for pos in reversed(insertions):
         ipa_list.insert(pos, 'ː')
@@ -937,9 +1056,8 @@ def _apply_rough_breathing(greek_word, ipa):
 
     - Vowel-initial words with dasia: prepend [h] if not already aspirated.
     - ῥ (rho with dasia): produce [r̥] (voiceless alveolar trill).
-      If the German voice can't handle r̥, we fall back to [hr] which
-      is a practical approximation that at least produces audible
-      aspiration before the trill.
+      Falls back to [hr] if the voice can't handle combining diacritics,
+      which at least produces audible aspiration before the trill.
     """
     norm = unicodedata.normalize('NFD', greek_word)
     apply_rough = config.get("options", {}).get("apply_rough_breathing", True)
@@ -972,12 +1090,19 @@ def _apply_rough_breathing(greek_word, ipa):
                 break
 
     if rho_has_dasia:
-        # Replace the first 'r' in IPA with voiceless trill.
-        # Try r̥ first; fall back to hr if the character isn't in our IPA set.
-        # The combining ring below (U+0325) marks voicelessness in IPA.
+        # Try voiceless trill r̥ (r + combining ring below U+0325).
+        # The German Chirp3 voice may not support combining diacritics
+        # on consonants. We use a config flag to select the fallback.
+        use_combining_voiceless = config.get("options", {}).get("voiceless_rho_combining", False)
         idx = ipa.find('r')
         if idx >= 0:
-            ipa = ipa[:idx] + 'r̥' + ipa[idx+1:]
+            if use_combining_voiceless:
+                ipa = ipa[:idx] + 'r\u0325' + ipa[idx+1:]
+            else:
+                # Fallback: [hr] — aspiration before trill. Not phonetically
+                # identical to a voiceless trill, but audibly distinct from
+                # plain [r] and within the German voice's capabilities.
+                ipa = ipa[:idx] + 'hr' + ipa[idx+1:]
         return ipa
 
     # Vowel-initial word with dasia: prepend [h]
@@ -986,6 +1111,7 @@ def _apply_rough_breathing(greek_word, ipa):
 
     return ipa
 
+
 def select_group_accent(group_words):
     """
     Given a list of words forming a prosodic group (proclitics + host + enclitics),
@@ -993,10 +1119,15 @@ def select_group_accent(group_words):
 
     Rules:
     - Proclitics are unaccented; skip them.
-    - The host word's accent is primary.
-    - Enclitics are normally suppressed, BUT if an enclitic causes a secondary
-      accent on the host's ultima (visible in the source text as a second acute),
-      we detect that from the Greek and include it.
+    - The host word's accent is primary and governs the group contour.
+    - Enclitic accents are suppressed for contour purposes.
+
+    NOTE: Enclitic-induced secondary accents on the host ultima (e.g., the
+    second acute in ἄνθρωπός τε) are NOT currently extracted. The primary
+    accent (antepenult) is used for the contour. Implementing secondary
+    pitch bumps would require find_accent_in_greek to return ALL accents
+    rather than stopping at the first, plus contour generation that supports
+    multiple peaks per prosodic group. This is a known simplification.
 
     Returns (accent_type, accent_ipa_idx, combined_ipa)
     """
@@ -1035,74 +1166,18 @@ def select_group_accent(group_words):
             continue
 
         is_proclitic = gw.lower() in PROCLITICS
-        is_enclitic = gw.lower() in ENCLITICS
 
         if not host_found and not is_proclitic:
-            # This is the host word (or at least the first content word)
             host_found = True
 
             if w_data["accent_type"] != "none" and w_data["accent_idx"] >= 0:
                 group_accent_type = w_data["accent_type"]
                 group_accent_ipa_idx = running_ipa_len + w_data["accent_idx"]
 
-        elif host_found and is_enclitic:
-            # Enclitic: accent is normally suppressed. But check if the
-            # source text shows this enclitic carrying an accent (which
-            # happens when two enclitics chain: the first gets an acute
-            # on its ultima). If the enclitic is accented in the source,
-            # we've already captured that in its word_data — but we
-            # suppress it for contour purposes since the host accent
-            # dominates the prosodic group.
-            #
-            # The one case we DO care about: the host word gained a
-            # secondary acute on its ultima due to the enclitic. This
-            # is already baked into the source text if the editor marked
-            # it (e.g., ἄνθρωπός τε). Our host word_data would have
-            # detected the LAST accent in the word via find_accent_in_greek,
-            # which scans for the first accent and stops. So we need to
-            # check the host for a secondary accent on the ultima.
-            pass
-
         running_ipa_len += len(w_data["ipa"])
 
-    # Third pass: check for secondary accent on host ultima (enclitic-induced).
-    # This only matters if we have enclitics in the group.
-    has_enclitics = any(
-        gw.lower() in ENCLITICS
-        for gw in group_words
-        if has_greek_chars(gw)
-    )
-
-    if has_enclitics and host_found:
-        # Find the host word and check if it has TWO accents in NFD form.
-        # Standard Greek has one accent per word, but enclitic-induced
-        # secondary accents produce two (e.g., ἄνθρωπός).
-        for i_gw, gw in enumerate(group_words):
-            w_data = word_data_list[i_gw]
-            if w_data is None:
-                continue
-            if gw.lower() in PROCLITICS or gw.lower() in ENCLITICS:
-                continue
-
-            # This is the host. Scan for multiple accents.
-            norm = unicodedata.normalize('NFD', gw)
-            accent_marks = [ch for ch in norm if ch in ('\u0301', '\u0300', '\u0342')]
-
-            if len(accent_marks) >= 2:
-                # The host has a secondary accent. The primary accent is
-                # already captured. We don't change the contour — the
-                # primary accent still dominates — but we note this for
-                # potential future use (e.g., a slight pitch bump on the
-                # ultima). For now, the existing behavior (single contour
-                # peak on primary accent) is a reasonable approximation.
-                #
-                # If you want to add a secondary pitch bump later, you'd
-                # compute a second accent_idx here and return both.
-                pass
-
-            break  # Only check the first host word
-
     return group_accent_type, group_accent_ipa_idx, combined_ipa
+
 
 # In analyze_word_data, we track how many new entries have been added
 # since the last save, and flush periodically.
@@ -1772,22 +1847,46 @@ def generate_audio():
 
         def estimate_chunk_duration_ms(ssml_parts):
             """
-            Rough estimate of how long a chunk would sound, based on
-            the number of phoneme tags and break durations. Used to
-            generate correctly-sized silence placeholders on failure.
+            Estimates the audio duration of an SSML chunk for silence placeholder
+            generation. Sums explicit break durations and estimates word durations
+            from syllable count (IPA vowel nuclei) rather than a flat per-word
+            constant.
+
+            Average syllable duration in slow formal speech ≈ 200-250ms.
+            We use 220ms as a baseline, which is conservative enough to avoid
+            over-long silences while being closer to reality than 400ms/word.
             """
             text = "".join(ssml_parts)
             duration = 0
 
-            # Count break tags and sum their durations
+            # Sum explicit break durations
             for match in re.finditer(r'<break\s+time="(\d+)ms"\s*/>', text):
                 duration += int(match.group(1))
 
-            # Count phoneme tags — rough estimate of 400ms per word
-            word_count = len(re.findall(r'<phoneme', text))
-            duration += word_count * 400
+            # Extract IPA strings from phoneme tags and count vowel nuclei
+            ms_per_syllable = 220
+            total_syllables = 0
 
-            return max(duration, 200)  # Minimum 200ms
+            for match in re.finditer(r'<phoneme[^>]*ph="([^"]*)"', text):
+                ipa = match.group(1)
+                # Count syllable nuclei: transitions into vowel segments
+                in_vowel = False
+                for ch in ipa:
+                    if ch.lower() in IPA_VOWELS:
+                        if not in_vowel:
+                            total_syllables += 1
+                            in_vowel = True
+                    elif ch != 'ː':
+                        in_vowel = False
+
+            # Minimum 1 syllable per phoneme tag if we somehow counted zero
+            phoneme_count = len(re.findall(r'<phoneme', text))
+            if total_syllables < phoneme_count:
+                total_syllables = phoneme_count
+
+            duration += total_syllables * ms_per_syllable
+
+            return max(duration, 200)
 
         def flush_buffer(parts):
             nonlocal fmt_chunk, chunk_count

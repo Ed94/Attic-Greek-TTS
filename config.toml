@@ -12,12 +12,12 @@ service_account_file = "./service-account.json"
 # voice_name = "de-DE-Chirp3-HD-Aoede"
 # voice_name = "de-DE-Chirp3-HD-Autonoe"
 # voice_name = "de-DE-Chirp3-HD-Laomedeia"
-voice_name = "de-DE-Chirp3-HD-Gacrux"
-# voice_name = "de-DE-Chirp3-HD-Enceladus"
+# voice_name = "de-DE-Chirp3-HD-Gacrux"
+voice_name = "de-DE-Chirp3-HD-Enceladus"
 
 # Chirp 3 works best with uncompressed audio (WAV)
 audio_encoding   = "LINEAR16" 
-speaking_rate    = 0.90
+speaking_rate    = 0.85
 output_dir       = "./output"
 pitch            = 0.0
 
@@ -72,5 +72,7 @@ downdrift_clause_based_rewind_scale = 0.35
 [options]
 apply_sandhi          = true # Glue words ending in apostrophe (ἀλλ᾽ ἐγὼ -> ἀλλ᾽ἐγὼ)
 apply_rough_breathing = true # Pronounce the 'h' (dasia)
+
+voiceless_rho_combining = false   # true = r̥ (IPA combining ring), false = hr (safe fallback)
 
 dry_run = false
