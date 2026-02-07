@@ -4,15 +4,23 @@ credentials_path = "./service-account.json"
 [tts]
 # CORRECTED NAME: Removed the hyphen between Chirp and 3
 # voice_name = "en-US-Chirp3-HD-Fenrir"
-# doice_name = "en-US-Chirp3-HD-Fenrir"
+# voice_name = "en-US-Chirp3-HD-Kore"
 voice_name = "de-DE-Chirp3-HD-Kore"
 
 # Chirp 3 works best with uncompressed audio (WAV)
 audio_encoding = "LINEAR16" 
 output_extension = "mp3"
-speaking_rate = 0.75
+speaking_rate = 0.82
 output_dir = "./output"
 
 [files]
 input_text = "input.txt"
 intermediate_data = "staging_data.json"
+
+[processing]
+# Delimiter for separating text into different mp3 files
+delimiter = "---"
+
+[cltk]
+dialect = "Attic"
+reconstruction = "Probert" # Probert is generally considered very accurate for Attic
