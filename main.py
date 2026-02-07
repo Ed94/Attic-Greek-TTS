@@ -1960,14 +1960,19 @@ def generate_audio():
     output_dir = config["tts"].get("output_dir", "output")
     debug_path = config["files"].get("debug_file", "debug_dump.json")
 
-    voice_name = config["tts"].get("voice_name", "de-DE-Chirp3-HD-Enceladus")
+    # Load Cdef generate_audio():
+    input_path = config["files"].get("input_text", "input.txt")
+    output_dir = config["tts"].get("output_dir", "output")
+    debug_path = config["files"].get("debug_file", "debug_dump.json")
+
+    # Load Config
+    voice_name = config["tts"].get("voice_name", "de-DE-Standard-E")
     rate       = config["tts"].get("speaking_rate", 1.0)
     audio_enc  = config["tts"].get("audio_encoding", "LINEAR16")
     pitch_val  = config["tts"].get("pitch", 0.0)
     max_bytes  = config["processing"].get("max_chunk_bytes", 4500)
     delimiter  = config["processing"].get("delimiter", "---")
-
-    dry_run = config["options"].get("dry_run", False)
+    dry_run    = config["options"].get("dry_run", False)
 
     ext = "wav" if audio_enc == "LINEAR16" else "mp3"
 
@@ -1986,14 +1991,26 @@ def generate_audio():
     if not dry_run:
         client = texttospeech.TextToSpeechClient()
 
-    lang_code    = "-".join(voice_name.split("-")[:2])
-    voice_params = texttospeech.VoiceSelectionParams(language_code=lang_code, name=voice_name)
+    # --- Dynamic Voice Configuration ---
+    # Handle language code extraction for all voice types (Standard, Chirp, Studio)
+    parts = voice_name.split("-")
+    if len(parts) >= 2:
+        lang_code = f"{parts[0]}-{parts[1]}"
+    else:
+        lang_code = "de-DE"
+
+    voice_params = texttospeech.VoiceSelectionParams(
+        language_code=lang_code, 
+        name=voice_name
+    )
 
     encoding_enum = texttospeech.AudioEncoding.LINEAR16
     if audio_enc == "MP3": encoding_enum = texttospeech.AudioEncoding.MP3
 
     audio_cfg = texttospeech.AudioConfig(
-        audio_encoding=encoding_enum, speaking_rate=rate, pitch=pitch_val
+        audio_encoding=encoding_enum, 
+        speaking_rate=rate, 
+        pitch=pitch_val
     )
 
     full_debug_log = []
@@ -2009,9 +2026,6 @@ def generate_audio():
 
         if dry_run:
             print(f"    [Dry Run] Section {sec_idx+1} processed.")
-            preview = full_ssml_string[:200].replace("\n", " ")
-            print(f"    [SSML Preview] {preview}...")
-
             full_debug_log.append({
                 "section": sec_idx+1,
                 "mode": "dry_run",
@@ -2020,7 +2034,7 @@ def generate_audio():
             })
             continue
 
-        # --- Audio Generation ---
+        # --- Audio Generation Variables ---
         current_ssml_parts = ["<speak>"]
         current_length     = len("<speak>")
 
@@ -2031,42 +2045,23 @@ def generate_audio():
         chunk_count    = 0
         failed_chunks  = []
 
-        # --- WAV silence generator for gap-filling ---
+        # --- Helper: Silence Generator ---
         def generate_silence_payload(duration_ms, sample_rate=24000, sample_width=2):
-            """
-            Generates raw PCM silence bytes for the given duration.
-            Used to fill gaps when an API chunk fails, so the output
-            audio maintains correct temporal alignment rather than
-            having words jump forward in time.
-            """
             num_samples = int(sample_rate * duration_ms / 1000)
             return b'\x00' * (num_samples * sample_width)
 
+        # --- Helper: Chunk Duration Estimator ---
         def estimate_chunk_duration_ms(ssml_parts):
-            """
-            Estimates the audio duration of an SSML chunk for silence placeholder
-            generation. Sums explicit break durations and estimates word durations
-            from syllable count (IPA vowel nuclei) rather than a flat per-word
-            constant.
-
-            Average syllable duration in slow formal speech ≈ 200-250ms.
-            We use 220ms as a baseline, which is conservative enough to avoid
-            over-long silences while being closer to reality than 400ms/word.
-            """
             text = "".join(ssml_parts)
             duration = 0
-
-            # Sum explicit break durations
             for match in re.finditer(r'<break\s+time="(\d+)ms"\s*/>', text):
                 duration += int(match.group(1))
-
-            # Extract IPA strings from phoneme tags and count vowel nuclei
+            
+            # Estimate word/syllable duration (~220ms per syllable)
             ms_per_syllable = 220
             total_syllables = 0
-
             for match in re.finditer(r'<phoneme[^>]*ph="([^"]*)"', text):
                 ipa = match.group(1)
-                # Count syllable nuclei: transitions into vowel segments
                 in_vowel = False
                 for ch in ipa:
                     if ch.lower() in IPA_VOWELS:
@@ -2075,21 +2070,22 @@ def generate_audio():
                             in_vowel = True
                     elif ch != 'ː':
                         in_vowel = False
-
-            # Minimum 1 syllable per phoneme tag if we somehow counted zero
+            
             phoneme_count = len(re.findall(r'<phoneme', text))
             if total_syllables < phoneme_count:
                 total_syllables = phoneme_count
-
+            
             duration += total_syllables * ms_per_syllable
-
             return max(duration, 200)
 
+        # --- Helper: Flush Buffer to API ---
         def flush_buffer(parts):
             nonlocal fmt_chunk, chunk_count
             parts_for_send = list(parts)
             parts_for_send.append("</speak>")
             ssml_string = "".join(parts_for_send)
+            
+            # API CALL
             chunk_bytes = fetch_audio_bytes(client, ssml_string, voice_params, audio_cfg)
 
             chunk_count += 1
@@ -2100,25 +2096,23 @@ def generate_audio():
                 failed_chunks.append(chunk_count)
 
                 if audio_enc == "LINEAR16":
-                    silence = generate_silence_payload(est_ms)
+                    # Detect SR from previous successful chunk, or default to 24k
+                    sr = get_sample_rate_from_fmt(fmt_chunk) if fmt_chunk else 24000
+                    silence = generate_silence_payload(est_ms, sample_rate=sr) 
                     audio_payloads.append(silence)
-                    # If we have no fmt chunk yet, we can't generate valid silence.
-                    # The silence bytes will still be appended and will work once
-                    # we get a fmt chunk from a later successful request.
-                # MP3 silence is non-trivial to generate; just log the gap.
                 return
 
             if audio_enc == "LINEAR16":
                 parsed_fmt, parsed_payload = parse_wav_fmt(chunk_bytes)
-
                 if parsed_fmt is None or parsed_payload is None:
                     print(f"    [!] Warning: Could not parse WAV chunk {chunk_count}. Attempting fallback.")
                     if fmt_chunk is None and len(chunk_bytes) >= 44:
-                        fmt_chunk = chunk_bytes[12:36]
+                        fmt_chunk = chunk_bytes[12:36] 
                     if len(chunk_bytes) > 44:
                         audio_payloads.append(chunk_bytes[44:])
                     return
 
+                # Capture fmt chunk from the first successful response
                 if fmt_chunk is None:
                     fmt_chunk = parsed_fmt
 
@@ -2126,8 +2120,9 @@ def generate_audio():
             else:
                 mp3_buffer.extend(chunk_bytes)
 
-            print(f"    -> Processed chunk {chunk_count}.")
+            print(f"    -> Processed chunk {chunk_count} ({len(chunk_bytes)} bytes).")
 
+        # --- Fragment Processing Loop ---
         for frag in fragments:
             frag_len = len(frag.encode('utf-8'))
             if current_length + frag_len + len("</speak>") > max_bytes:
@@ -2151,7 +2146,7 @@ def generate_audio():
         else:
             final_audio_bytes = bytes(mp3_buffer)
 
-        # --- Generate Filename ---
+        # --- Save File ---
         greek_slug = "".join([c for c in text[:40] if has_greek_chars(c) or c.isspace()])
         safe_slug  = sanitize_filename(greek_slug)
         if not safe_slug: safe_slug = f"section_{sec_idx+1}"
@@ -2166,21 +2161,28 @@ def generate_audio():
         else:
             print("    [!] Error: No audio generated for this section.")
 
-        # Log failed chunks in debug output
+        # Log debug info
         section_debug_entry = {"section": sec_idx+1, "analysis": section_debug}
         if failed_chunks:
             section_debug_entry["failed_chunks"] = failed_chunks
-            section_debug_entry["note"] = "Silence placeholders inserted for failed chunks."
+            section_debug_entry["note"] = "Silence placeholders inserted."
         full_debug_log.append(section_debug_entry)
 
         save_cache()
 
     # --- Post-Processing ---
     if dry_run:
-        est_cost = (total_chars / 1_000_000) * 16.00
+        # Simple cost estimation logic for display
+        if    "Studio"   in voice_name: cost_per_m = 160.0
+        elif  "Chirp3"   in voice_name: cost_per_m = 30.0
+        elif  "Standard" in voice_name: cost_per_m = 4.0
+        else: cost_per_m = 16.0 # WaveNet, Neural2, Polyglot
+        
+        est_cost = (total_chars / 1_000_000) * cost_per_m
         print(f"\n:: DRY RUN COMPLETE")
         print(f":: Total Characters: {total_chars}")
-        print(f":: Estimated Cost (WaveNet Pricing — verify for Chirp3-HD): ${est_cost:.2f} USD")
+        print(f":: Estimated Cost: ~${est_cost:.4f} USD (based on voice type)")
+        
     elif generated_files:
         playlist_path = os.path.join(output_dir, "playlist.m3u")
         with open(playlist_path, "w", encoding="utf-8") as f:

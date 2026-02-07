@@ -2,18 +2,85 @@
 service_account_file = "./service-account.json"
 
 [tts]
-# CORRECTED NAME: Removed the hyphen between Chirp and 3
-# voice_name = "de-DE-Chirp3-HD-Fenrir"
-# voice_name = "de-DE-Chirp3-HD-Erinome"
-# voice_name = "de-DE-Chirp3-HD-Kore"
-# voice_name = "de-DE-Chirp3-HD-Achernar"
-# voice_name = "de-DE-Chirp3-HD-Orus"
-# voice_name = "de-DE-Chirp3-HD-Despina"
-# voice_name = "de-DE-Chirp3-HD-Aoede"
-# voice_name = "de-DE-Chirp3-HD-Autonoe"
-# voice_name = "de-DE-Chirp3-HD-Laomedeia"
-# voice_name = "de-DE-Chirp3-HD-Gacrux"
-voice_name = "de-DE-Chirp3-HD-Enceladus"
+# ==============================================================================
+# G O O G L E   C L O U D   V O I C E   S E L E C T I O N
+# ==============================================================================
+# PRICING NOTE: Costs are per 1 million characters (1M chars).
+# "Free Tier" usually applies to the first 1M-4M chars per month depending on type.
+
+# --- TIER 1: STANDARD (Cost-Efficient) ---
+# Price: $4.00 USD / 1M chars (Free tier: 0-4M chars/month)
+# voice_name = "de-DE-Standard-A" # Female
+# voice_name = "de-DE-Standard-B" # Male  
+# voice_name = "de-DE-Standard-C" # Female
+# voice_name = "de-DE-Standard-D" # Male  
+# voice_name = "de-DE-Standard-E" # Male  
+# voice_name = "de-DE-Standard-F" # Female
+# voice_name = "de-DE-Standard-G" # Female
+# voice_name = "de-DE-Standard-H" # Male  
+
+# --- TIER 2: WAVENET (Higher Quality) ---
+# Price: $16.00 USD / 1M chars (Free tier: 0-1M chars/month)
+# voice_name = "de-DE-Wavenet-A" # Female
+# voice_name = "de-DE-Wavenet-B" # Male  
+# voice_name = "de-DE-Wavenet-C" # Female
+# voice_name = "de-DE-Wavenet-D" # Male  
+# voice_name = "de-DE-Wavenet-E" # Male  
+# voice_name = "de-DE-Wavenet-F" # Female
+# voice_name = "de-DE-Wavenet-G" # Female
+# voice_name = "de-DE-Wavenet-H" # Male  
+
+# --- TIER 3: NEURAL2 (Premium) ---
+# Price: $16.00 USD / 1M chars (Free tier: 0-1M chars/month)
+# voice_name = "de-DE-Neural2-A" # Female
+# voice_name = "de-DE-Neural2-B" # Male  
+# voice_name = "de-DE-Neural2-C" # Female
+# voice_name = "de-DE-Neural2-D" # Male  
+# voice_name = "de-DE-Neural2-F" # Female
+# voice_name = "de-DE-Neural2-G" # Female
+# voice_name = "de-DE-Neural2-H" # Male  
+
+# --- TIER 4: POLYGLOT ---
+# Price: $16.00 USD / 1M chars (Free tier: 0-1M chars/month)
+voice_name = "de-DE-Polyglot-1" # Male ($16.00/1M)
+
+# --- TIER 5: CHIRP 3 / HD VOICES (Experimental / 48kHz) ---
+# Price: $30.00 USD / 1M chars (Free tier: 0-1M chars/month)
+# Note: These sound most natural but may ignore pitch contour tags.
+
+# -- Female Chirp 3 Voices --
+# voice_name = "de-DE-Chirp3-HD-Achernar"     # Female
+# voice_name = "de-DE-Chirp3-HD-Aoede"        # Female
+# voice_name = "de-DE-Chirp3-HD-Autonoe"      # Female
+# voice_name = "de-DE-Chirp3-HD-Callirrhoe"   # Female
+# voice_name = "de-DE-Chirp3-HD-Despina"      # Female
+# voice_name = "de-DE-Chirp3-HD-Erinome"      # Female
+# voice_name = "de-DE-Chirp3-HD-Gacrux"       # Female
+# voice_name = "de-DE-Chirp3-HD-Kore"         # Female
+# voice_name = "de-DE-Chirp3-HD-Laomedeia"    # Female
+# voice_name = "de-DE-Chirp3-HD-Leda"         # Female
+# voice_name = "de-DE-Chirp3-HD-Pulcherrima"  # Female
+# voice_name = "de-DE-Chirp3-HD-Sulafat"      # Female
+# voice_name = "de-DE-Chirp3-HD-Vindemiatrix" # Female
+# voice_name = "de-DE-Chirp3-HD-Zephyr"       # Female
+
+# -- Male Chirp 3 Voices --
+# voice_name = "de-DE-Chirp3-HD-Achird"        # Male
+# voice_name = "de-DE-Chirp3-HD-Algenib"       # Male
+# voice_name = "de-DE-Chirp3-HD-Algieba"       # Male
+# voice_name = "de-DE-Chirp3-HD-Alnilam"       # Male
+# voice_name = "de-DE-Chirp3-HD-Charon"        # Male
+# voice_name = "de-DE-Chirp3-HD-Enceladus"     # Male
+# voice_name = "de-DE-Chirp3-HD-Fenrir"        # Male
+# voice_name = "de-DE-Chirp3-HD-Iapetus"       # Male
+# voice_name = "de-DE-Chirp3-HD-Orus"          # Male
+# voice_name = "de-DE-Chirp3-HD-Puck"          # Male
+# voice_name = "de-DE-Chirp3-HD-Rasalgethi"    # Male
+# voice_name = "de-DE-Chirp3-HD-Sadachbia"     # Male
+# voice_name = "de-DE-Chirp3-HD-Sadaltager"    # Male
+# voice_name = "de-DE-Chirp3-HD-Schedar"       # Male
+# voice_name = "de-DE-Chirp3-HD-Umbriel"       # Male
+# voice_name = "de-DE-Chirp3-HD-Zubenelgenubi" # Male
 
 # Chirp 3 works best with uncompressed audio (WAV)
 audio_encoding   = "LINEAR16" 
