@@ -5,13 +5,10 @@ import tomli
 import unicodedata
 from google.cloud import texttospeech
 
-# --- 1. CONFIG LOADER ---
 with open("config.toml", "rb") as f:
     config = tomli.load(f)
 
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = config["google"]["credentials_path"]
-
-# --- 2. HELPERS ---
 
 def romanize_greek(text):
     """
@@ -83,7 +80,7 @@ def build_ssml_with_pauses(full_text, transcriber):
     # Regex to capture punctuation
     parts = re.split(r'([,\.·;:\-])', full_text)
     
-    ssml_parts = ["<speak>"]
+    ssml_parts    = ["<speak>"]
     debug_entries = []
     
     for part in parts:
@@ -103,32 +100,32 @@ def build_ssml_with_pauses(full_text, transcriber):
             debug_entries.append({"type": "break", "val": "400ms"})
         else:
             # Text phrase
-            ipa = get_ipa_transcription(part, transcriber)
+            ipa        = get_ipa_transcription(part, transcriber)
             dummy_text = romanize_greek(part)
             
             if ipa and dummy_text:
-                ssml_parts.append(f'<phoneme alphabet="ipa" ph="{ipa}">{dummy_text}</phoneme>')
+                ssml_parts.append(f'<phoneme alphabet="ipa" ph="{ ipa }">{ dummy_text }</phoneme>')
                 debug_entries.append({
-                    "type": "word", 
-                    "greek": part, 
+                    "type":      "word", 
+                    "greek":     part, 
                     "romanized": dummy_text, 
-                    "ipa": ipa
+                    "ipa":       ipa
                 })
             else:
                 ssml_parts.append(part)
-                debug_entries.append({"type": "fallback", "text": part})
+                debug_entries.append({ "type": "fallback", "text": part })
                 
     ssml_parts.append("</speak>")
     return "".join(ssml_parts), debug_entries
 
-# --- 3. TEXT PARSER ---
 def parse_input_file(filepath):
     if not os.path.exists(filepath):
-        print(f"Error: {filepath} not found.")
+        print(f"Error: { filepath } not found.")
         return []
     with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()
-    raw_sections = content.split(config["processing"]["delimiter"])
+
+    raw_sections   = content.split(config["processing"]["delimiter"])
     clean_sections = []
     for section in raw_sections:
         clean_text = section.strip().replace("\n", " ")
@@ -136,72 +133,63 @@ def parse_input_file(filepath):
             clean_sections.append(clean_text)
     return clean_sections
 
-# --- 4. GENERATION ---
 def generate_audio_directly():
     input_path = "input.txt"
     output_dir = "output"
     # Fallback to defaults if config keys missing
     voice_name = config["tts"].get("voice_name", "de-DE-Chirp3-HD-Kore")
-    rate = config["tts"].get("speaking_rate", 0.9)
-    audio_enc = config["tts"].get("audio_encoding", "MP3")
+    rate       = config["tts"].get("speaking_rate", 0.9)
+    audio_enc  = config["tts"].get("audio_encoding", "MP3")
     
     # Initialize CLTK once
     from cltk.phonology.grc.transcription import Transcriber
     cltk_transcriber = Transcriber(
-        dialect=config["cltk"]["dialect"], 
-        reconstruction=config["cltk"]["reconstruction"]
+        dialect        = config["cltk"]["dialect"], 
+        reconstruction = config["cltk"]["reconstruction"]
     )
     
     sections = parse_input_file(input_path)
-    print(f"--- PROCESSING {len(sections)} SECTIONS ---")
-
+    print(f"--- PROCESSING { len(sections) } SECTIONS ---")
     client = texttospeech.TextToSpeechClient()
-    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok = True)
     print(f"Using Voice: {voice_name}")
 
     # For Logging
     full_debug_log = []
-
     for i, text in enumerate(sections):
         print(f"Generating Section {i+1}...")
-        
         # Build SSML and get debug info
         ssml_text, section_debug = build_ssml_with_pauses(text, cltk_transcriber)
-        
         # Store debug info
-        clean_name = re.sub(r'[^\w\s]', '', text[:20]).strip().replace(" ", "_")
+        clean_name    = re.sub(r'[^\w\s]', '', text[:20]).strip().replace(" ", "_")
         filename_base = f"{i+1:02d}_{clean_name}_{voice_name}_rate{rate}"
         full_debug_log.append({
-            "filename": f"{filename_base}.mp3",
-            "original_text": text,
+            "filename":       f"{filename_base}.mp3",
+            "original_text":  text,
             "generated_ssml": ssml_text,
-            "ipa_breakdown": section_debug
+            "ipa_breakdown":  section_debug
         })
-        
-        # Configure API Request
         synthesis_input = texttospeech.SynthesisInput(ssml=ssml_text)
-
         # Parse language code from voice name (e.g., de-DE)
-        lang_code = "-".join(voice_name.split("-")[:2])
-        voice = texttospeech.VoiceSelectionParams(language_code=lang_code, name=voice_name)
-        
+        lang_code    = "-".join(voice_name.split("-")[:2])
+        voice        = texttospeech.VoiceSelectionParams(language_code=lang_code, name=voice_name)
         encoding_map = {
             "LINEAR16": texttospeech.AudioEncoding.LINEAR16, 
-            "MP3": texttospeech.AudioEncoding.MP3
+            "MP3":      texttospeech.AudioEncoding.MP3
         }
-        
         audio_config = texttospeech.AudioConfig(
-            audio_encoding=encoding_map.get(audio_enc, texttospeech.AudioEncoding.MP3),
-            speaking_rate=rate,
-            pitch=config["tts"]["pitch"]
+            audio_encoding =encoding_map.get(audio_enc, texttospeech.AudioEncoding.MP3),
+            speaking_rate  = rate,
+            pitch          = config["tts"]["pitch"]
         )
-
         output_path = os.path.join(output_dir, f"{filename_base}.mp3")
 
         try:
             response = client.synthesize_speech(
-                request=texttospeech.SynthesizeSpeechRequest(
-                    input=synthesis_input, voice=voice, audio_config=audio_config
+                request = texttospeech.SynthesizeSpeechRequest(
+                    input        = synthesis_input, 
+                    voice        = voice, 
+                    audio_config = audio_config
                 )
             )
             with open(output_path, "wb") as out:
@@ -210,10 +198,9 @@ def generate_audio_directly():
         except Exception as e:
             print(f"  -> API Error: {e}")
 
-    # Write Debug Dump
     with open("debug_dump.json", "w", encoding="utf-8") as f:
         json.dump(full_debug_log, f, indent=2, ensure_ascii=False)
-    print("\n--- Debug dump saved to debug_dump.json ---")
+        print("\n--- Debug dump saved to debug_dump.json ---")
 
 if __name__ == "__main__":
     generate_audio_directly()
