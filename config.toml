@@ -12,12 +12,12 @@ service_account_file = "./service-account.json"
 # voice_name = "de-DE-Chirp3-HD-Aoede"
 # voice_name = "de-DE-Chirp3-HD-Autonoe"
 # voice_name = "de-DE-Chirp3-HD-Laomedeia"
-voice_name = "de-DE-Chirp3-HD-Gacrux"
-# voice_name = "de-DE-Chirp3-HD-Enceladus"
+# voice_name = "de-DE-Chirp3-HD-Gacrux"
+voice_name = "de-DE-Chirp3-HD-Enceladus"
 
 # Chirp 3 works best with uncompressed audio (WAV)
 audio_encoding   = "LINEAR16" 
-speaking_rate    = 1.00
+speaking_rate    = 0.90
 output_dir       = "./output"
 pitch            = 0.0
 
@@ -32,6 +32,7 @@ delimiter       = "---"
 max_chunk_bytes = 4500
 
 [cltk]
+# Options: "Attic", "Koine"
 dialect        = "Attic"
 reconstruction = "Probert" # Probert is generally considered very accurate for Attic
 
@@ -51,9 +52,18 @@ max_breath_words   = 9  # Minimum words before looking for a breath spot
 force_breath_words = 20 # Force a breath if no natural spot found by this count
 
 [prosody]
-contour_start       = "+0%"  # Start Neutral/High so the first syllable isn't swallowed
-contour_peak        = "+35%" # Go higher for the acute accent (The "Singing" peak)
-contour_grave       = "+5%"  # 
-contour_end         = "-12%" # Drop lower at the end for closure
-circumflex_tail_len = 15     # How long (in %) does the circumflex fall take?
-heavy_word_rate     = "-15%" # Speed slowdown for words with long vowels (e.g. "-15%").
+# PITCH SETTINGS (Integers representing % change)
+contour_peak        = 35     # The "Singing" peak of an Acute accent relative to current baseline
+contour_grave       = 5      # The suppressed pitch of a Grave accent
+contour_end         = -12    # How far pitch drops at the end of a word
+circumflex_tail_len = 15     # Length of the Circumflex fall (% of word duration)
+heavy_word_rate     = "-15%" # Speed slowdown for heavy words (e.g. -15%)
+# DOWNDRIFT (The "Human" Factor)
+# Sentences start high and drift lower. 
+# This prevents the "Robot List" effect.
+downdrift_start = 10     # Start sentence +10% higher than average
+downdrift_end   = -10    # End sentence -10% lower than average
+
+[options]
+apply_sandhi          = true # Glue words ending in apostrophe (ἀλλ᾽ ἐγὼ -> ἀλλ᾽ἐγὼ)
+apply_rough_breathing = true # Pronounce the 'h' (dasia)
