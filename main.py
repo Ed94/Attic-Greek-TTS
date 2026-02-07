@@ -34,12 +34,14 @@ ARCHITECTURAL PIPELINE:
     v
 [Sentence Analysis] (The "Downdrift" Engine)
     - Calculates linear pitch baseline (Start +10% -> End -10%).
-    - Clause Detection: Resets intonation at colons/commas to prevent
-      "growling" at the end of long periodic sentences.
+    - Interrogative Detection: Inverts downdrift to "Updrift" (Tunable)
+      for sentences ending in a Greek question mark (;).
+    - Clause Detection: Resets intonation at colons/commas.
     |
     v
 [Phonology Engine] (Cached)
     - Transcribes to IPA (CLTK / Probert reconstruction).
+    - Gamma Nasalization: Enforces [ŋ] for γγ, γκ, γχ, γξ.
     - IPA Normalization: Enforces Alveolar Trill (/r/) over German Uvular (/ʁ/).
     - Quantity Enforcement: Forces length markers (ː) on Eta/Omega.
     - Smart Aspirate: Injects /h/ for Rough Breathing without double-aspiration.
@@ -54,8 +56,8 @@ ARCHITECTURAL PIPELINE:
     |
     v
 [SSML Batcher]
-    - Applies True Sandhi: Merges elided words (ἀλλ᾽ ἐγὼ -> ἀλλ᾽ἐγὼ) into
-      single prosodic units to prevent glottal stops.
+    - Word Grouping: Merges Proclitics (ὁ), Enclitics (τις), and Elisions (ἀλλ᾽)
+      into single prosodic units to ensure continuous phonation.
     - Chunks stream into < 5000 byte segments.
     |
     v
@@ -74,6 +76,8 @@ TUNABLES (config.toml):
     contour_peak    :: (Int) Pitch rise for Acute accent (e.g., 35).
     downdrift_start :: (Int) Baseline pitch at sentence start (e.g., 10).
     downdrift_end   :: (Int) Baseline pitch at sentence end (e.g., -10).
+    updrift_start   :: (Int) Start pitch for questions (e.g., -5).
+    updrift_end     :: (Int) End pitch for questions (e.g., 10).
     heavy_word_rate :: (Str) Speed slowdown for heavy words (e.g., "-15%").
 
 [pacing]
@@ -87,21 +91,28 @@ CACHING:
 IPA transcription is expensive. We maintain 'transcription_cache.json'.
 The cache is updated atomically after every section is processed to prevent
 data loss during long batch operations.
+*Auto-Invalidation*: If config.toml or the script changes, the cache wipes.
 
 ================================================================================
 """
 
-
+import hashlib
 import os
 import re
+import sys
 import json
 import struct
-import tomli
+import argparse
 import unicodedata
 from   xml.sax.saxutils import escape
 from   cltk.phonology.grc.transcription import Transcriber
 from   google.cloud                     import texttospeech
 
+# Python 3.11+ Compatibility
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
 
 # ==============================================================================
 # 1. C O N F I G U R A T I O N   &   S E T U P
@@ -110,28 +121,62 @@ from   google.cloud                     import texttospeech
 if not os.path.exists("config.toml"):
     raise FileNotFoundError("CRITICAL: config.toml not found.")
 
-with open("config.toml", "rb") as f:
-    config = tomli.load(f)
+def get_file_hash(filepath):
+    """Generates MD5 hash of a file for cache invalidation."""
+    if not os.path.exists(filepath): return ""
+    with open(filepath, "rb") as f:
+        return hashlib.md5(f.read()).hexdigest()
 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = config["google_cloud"]["service_account_file"]
+with open("config.toml", "rb") as f:
+    config = tomllib.load(f)
+
+if "google_cloud" in config:
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = config["google_cloud"]["service_account_file"]
 
 print(":: Initializing CLTK Transcriber (Attic/Probert)...")
-# Force Attic as CLTK does not support Epic keys directly.
 TRANSCRIBER = Transcriber(
     dialect        = config["cltk"]["dialect"], 
     reconstruction = config["cltk"]["reconstruction"]
 )
 
+def get_file_hash(filepath):
+    if not os.path.exists(filepath): return ""
+    with open(filepath, "rb") as f:
+        return hashlib.md5(f.read()).hexdigest()
+
 CACHE_FILE = "transcription_cache.json"
 TRANSCRIPTION_CACHE = {}
+
+# Calculate current state
+current_config_hash = get_file_hash("config.toml")
+current_script_hash = get_file_hash(__file__)
 
 if os.path.exists(CACHE_FILE):
     try:
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
-            TRANSCRIPTION_CACHE = json.load(f)
-        print(f":: Cache Hit: Loaded {len(TRANSCRIPTION_CACHE)} lexical entries.")
+            loaded_cache = json.load(f)
+        
+        # Check integrity via _meta field
+        meta = loaded_cache.get("_meta", {})
+        if (meta.get("config_hash") == current_config_hash and 
+            meta.get("script_hash") == current_script_hash):
+            
+            TRANSCRIPTION_CACHE = loaded_cache
+            # Subtract 1 for _meta entry
+            count = max(0, len(TRANSCRIPTION_CACHE) - 1)
+            print(f":: Cache Hit: Loaded {count} lexical entries.")
+        else:
+            print(":: Change detected in config or script. Invalidating cache.")
+            TRANSCRIPTION_CACHE = {}
+            
     except Exception as e:
         print(f":: Cache Corrupted ({e}). Starting with empty lexicon.")
+
+# Initialize/Update metadata for the next save
+TRANSCRIPTION_CACHE["_meta"] = {
+    "config_hash": current_config_hash,
+    "script_hash": current_script_hash
+}
 
 # ==============================================================================
 # 2. D A T A   M A P P I N G S
@@ -141,6 +186,13 @@ BREATH_TRIGGERS = {
     "καὶ", "ἀλλὰ", "ἢ", "ὅτι", "ἵνα", "ὡς", "ὥστε", "ἐπεὶ", "ἐπειδὴ",  
     "εἰς", "πρὸς", "ἐν", "ἐπὶ", "περὶ", "παρὰ", "μετὰ", "διὰ", "ὑπὲρ", 
     "ἀπὸ", "ἐκ", "ἐξ", "κατὰ", "ὑπὸ", "ὃς", "ἣ", "ὃ", "οἷος", "ὅσος", "γὰρ", "δέ"
+}
+
+PROCLITICS = {
+    "ὁ", "ἡ", "οἱ", "αἱ", "ἐν", "εἰς", "ἐκ", "ἐξ", "εἰ", "ὡς", "οὐ", "οὐκ", "οὐχ"
+}
+ENCLITICS = {
+    "τε", "γε", "με", "μου", "μοι", "σε", "σου", "σοι", "τις", "τι", "που", "πως", "ποτε"
 }
 
 GREEK_NUM_BASICS = {
@@ -271,6 +323,9 @@ def analyze_word_data(word):
     3. Searches for Greek Pitch Accents.
     4. Fallbacks for Stress/Quantity.
     """
+    # Skip caching for _meta key
+    if word == "_meta": return None
+    
     if word in TRANSCRIPTION_CACHE:
         return TRANSCRIPTION_CACHE[word]
     if not word.strip(): return None
@@ -285,12 +340,13 @@ def analyze_word_data(word):
 
         norm_greek  = unicodedata.normalize('NFD', word)
 
-        # --- VOWEL LENGTH ENFORCEMENT ---
-        # If Greek has Eta (η) or Omega (ω), force IPA length (ː).
-        # 1. Force Alveolar Trill: Replace uvular 'ʁ' or approximant 'ɹ' with 'r'
+        # Gamma Nasalization (Angelos Rule)
+        clean_ipa = clean_ipa.replace("gg", "ŋg").replace("gk", "ŋk").replace("gχ", "ŋχ").replace("gξ", "ŋξ")
+
+        # IPA Normalization (Trilled R)
         clean_ipa = clean_ipa.replace('ʁ', 'r').replace('ɹ', 'r')
         
-        # 2. Vowel Length Enforcement (German Rhythm)
+        # Vowel Length Enforcement
         if 'η' in word or 'ω' in word or '\u0342' in norm_greek:
             if 'ː' not in clean_ipa:
                 replacements = {'ɛ': 'ɛː', 'ɔ': 'ɔː', 'e': 'eː', 'o': 'oː'}
@@ -299,7 +355,7 @@ def analyze_word_data(word):
                     temp_ipa.append(replacements.get(char, char))
                 clean_ipa = "".join(temp_ipa)
 
-        # --- ROUGH BREATHING ---
+        # Rough Breathing
         apply_rough = config.get("options", {}).get("apply_rough_breathing", True)
         
         if apply_rough and '\u0314' in norm_greek:
@@ -420,8 +476,13 @@ def build_ssml_fragments(full_text):
     rate_global  = config["tts"].get("speaking_rate", 1.0)
     pauses       = config.get("pauses", {})
     pacing       = config.get("pacing", {})
+    
+    # --- Tunable Intonation ---
     drift_start  = config["prosody"].get("downdrift_start", 10)
     drift_end    = config["prosody"].get("downdrift_end", -10)
+    updrift_start = config["prosody"].get("updrift_start", -5)
+    updrift_end   = config["prosody"].get("updrift_end", 10)
+    
     rewind_scale = config["prosody"].get("downdrift_clause_based_rewind_scale", 0.3)
     apply_sandhi = config.get("options", {}).get("apply_sandhi", True)
     
@@ -462,7 +523,13 @@ def build_ssml_fragments(full_text):
         total_sentence_words    = len(clean_words_in_sentence)
         current_word_idx        = 0
         
-        # Split logic (Fixed to include token_dbl)
+        # IMPROVEMENT 1: Interrogative Intonation (Tunable Updrift)
+        current_drift_start = drift_start
+        current_drift_end   = drift_end
+        if sentence.strip().endswith(';'):
+            current_drift_start = updrift_start
+            current_drift_end   = updrift_end
+
         part_pattern = r'([,·:\-]|\.|\|\|DBL_BRK\|\|)' 
         parts        = re.split(part_pattern, sentence)
         
@@ -486,9 +553,7 @@ def build_ssml_fragments(full_text):
                 fragments.append(f'<break time="{t}"/>')
                 words_since_breath = 0 
                 
-                # --- CLAUSE-BASED INTONATION RESET ---
-                # Rewind the downdrift logic slightly to "lift" the voice up
-                # after a pause, preventing the end of long sentences from growling.
+                # Clause-Based Intonation Reset
                 if total_sentence_words > 0:
                     rewind_amount = int(total_sentence_words * rewind_scale)
                     current_word_idx = max(0, current_word_idx - rewind_amount)
@@ -497,19 +562,35 @@ def build_ssml_fragments(full_text):
             
             words = part.split()
             
-            # SANDHI / ELISION LOGIC
-            # Use while loop to look ahead and merge words
+            # Enclitic / Proclitic / Sandhi Merging
             i = 0
             while i < len(words):
                 word = words[i]
+                merged = True
                 
-                # Check for Elision (Sandhi)
-                if apply_sandhi and (word.endswith('᾽') or word.endswith('’') or word.endswith("'")) and i + 1 < len(words):
+                while merged and i + 1 < len(words):
+                    merged = False
                     next_word = words[i+1]
-                    if has_greek_chars(next_word):
-                        word = word + next_word # Merge text for shared prosody
-                        i   += 1 # Skip next word iteration
-                
+                    if not has_greek_chars(next_word): break
+
+                    if apply_sandhi and (word.endswith('᾽') or word.endswith('’') or word.endswith("'")):
+                        word += next_word
+                        i += 1
+                        merged = True
+                        continue
+                    
+                    if word.lower() in PROCLITICS:
+                        word += next_word
+                        i += 1
+                        merged = True
+                        continue
+                        
+                    if next_word.lower() in ENCLITICS:
+                        word += next_word
+                        i += 1
+                        merged = True
+                        continue
+
                 if not has_greek_chars(word): 
                     if word.strip(): fragments.append(escape(word))
                     i += 1
@@ -527,7 +608,7 @@ def build_ssml_fragments(full_text):
                 else:
                     position_ratio = 0.0
                 
-                current_baseline  = drift_start + ((drift_end - drift_start) * position_ratio)
+                current_baseline  = current_drift_start + ((current_drift_end - current_drift_start) * position_ratio)
                 current_word_idx += 1
 
                 # Phonology
@@ -631,6 +712,8 @@ def generate_audio():
     max_bytes  = config["processing"].get("max_chunk_bytes", 4500)
     delimiter  = config["processing"].get("delimiter", "---")
 
+    dry_run = config["options"].get("dry_run", False)
+
     ext = "wav" if audio_enc == "LINEAR16" else "mp3"
     
     if not os.path.exists(input_path):
@@ -641,9 +724,12 @@ def generate_audio():
     sections = [s.strip() for s in content.split(delimiter) if s.strip()]
     
     print(f":: Processing { len(sections) } sections...")
+    if dry_run: print(":: DRY RUN MODE: No audio will be generated.")
     
-    client = texttospeech.TextToSpeechClient()
-    os.makedirs(output_dir, exist_ok = True)
+    client = None
+    if not dry_run:
+        client = texttospeech.TextToSpeechClient()
+        os.makedirs(output_dir, exist_ok = True)
     
     lang_code    = "-".join(voice_name.split("-")[:2])
     voice_params = texttospeech.VoiceSelectionParams(language_code=lang_code, name=voice_name)
@@ -656,12 +742,32 @@ def generate_audio():
     )
 
     full_debug_log = []
-    generated_files = [] # For Playlist
+    generated_files = [] 
+    total_chars = 0
 
     for i, text in enumerate(sections):
+        total_chars += len(text)
         print(f":: Generating Section {i+1}...")
         fragments, section_debug = build_ssml_fragments(text)
         
+        # Construct FULL SSML for debug log in both modes
+        full_ssml_string = "".join(fragments)
+        
+        # IMPROVEMENT: Enhanced Debug Dump logic
+        if dry_run:
+            print(f"    [Dry Run] Section {i+1} processed.")
+            # Preview first 200 chars
+            preview = full_ssml_string[:200].replace("\n", " ")
+            print(f"    [SSML Preview] {preview}...")
+            
+            full_debug_log.append({ 
+                "section": i+1, 
+                "mode": "dry_run",
+                "ssml": full_ssml_string,
+                "analysis": section_debug 
+            })
+            continue
+
         current_ssml_parts = ["<speak>"]
         current_length     = len("<speak>")
         final_audio_bytes  = bytearray()
@@ -722,8 +828,12 @@ def generate_audio():
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(TRANSCRIPTION_CACHE, f, ensure_ascii=False, indent=2)
 
-    # Playlist Generation
-    if generated_files:
+    if dry_run:
+        est_cost = (total_chars / 1_000_000) * 16.00
+        print(f"\n:: DRY RUN COMPLETE")
+        print(f":: Total Characters: {total_chars}")
+        print(f":: Estimated Cost (WaveNet Pricing): ${est_cost:.2f} USD")
+    elif generated_files:
         playlist_path = os.path.join(output_dir, "playlist.m3u")
         with open(playlist_path, "w", encoding="utf-8") as f:
             for fname in generated_files:

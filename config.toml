@@ -12,12 +12,12 @@ service_account_file = "./service-account.json"
 # voice_name = "de-DE-Chirp3-HD-Aoede"
 # voice_name = "de-DE-Chirp3-HD-Autonoe"
 # voice_name = "de-DE-Chirp3-HD-Laomedeia"
-# voice_name = "de-DE-Chirp3-HD-Gacrux"
-voice_name = "de-DE-Chirp3-HD-Enceladus"
+voice_name = "de-DE-Chirp3-HD-Gacrux"
+# voice_name = "de-DE-Chirp3-HD-Enceladus"
 
 # Chirp 3 works best with uncompressed audio (WAV)
 audio_encoding   = "LINEAR16" 
-speaking_rate    = 0.90
+speaking_rate    = 0.80
 output_dir       = "./output"
 pitch            = 0.0
 
@@ -61,8 +61,10 @@ heavy_word_rate     = "-15%" # Speed slowdown for heavy words (e.g. -15%)
 # DOWNDRIFT (The "Human" Factor)
 # Sentences start high and drift lower. 
 # This prevents the "Robot List" effect.
-downdrift_start = 10     # Start sentence +10% higher than average
-downdrift_end   = -10    # End sentence -10% lower than average
+downdrift_start =  10  # Start sentence higher than average
+downdrift_end   = -10  # End sentence lower than average
+updrift_start   = -5   # Used if sentence ends with ; we use updrift instead
+updrift_end     =  10 
 
 # Rewind the downdrift logic slightly to "lift" the voice up after a pause, preventing the end of long sentences from growling.
 downdrift_clause_based_rewind_scale = 0.35 
@@ -70,3 +72,5 @@ downdrift_clause_based_rewind_scale = 0.35
 [options]
 apply_sandhi          = true # Glue words ending in apostrophe (ἀλλ᾽ ἐγὼ -> ἀλλ᾽ἐγὼ)
 apply_rough_breathing = true # Pronounce the 'h' (dasia)
+
+dry_run = false
