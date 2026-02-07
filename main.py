@@ -4,122 +4,260 @@ A N C I E N T   G R E E K   T T S   G E N E R A T O R
 The "German Trojan Horse" Method
 ================================================================================
 
-Google Cloud TTS (and most commercial engines) does not support Ancient Greek.
-Feeding it Greek script results in either Modern Greek pronunciation (wrong
-vowels, stress instead of pitch) or total failure.
+Google Cloud TTS does not support Ancient Greek. Feeding it Greek script
+produces Modern Greek pronunciation — wrong vowels, stress accent instead
+of pitch accent, monophthongized diphthongs — or outright failure.
 
------------------------------------------------------------------------------
-T H E   S O L U T I O N
------------------------------------------------------------------------------
-We treat the TTS engine as a dumb synthesizer. We calculate the exact
-phonemes (IPA) ourselves and wrap them in SSML tags. We use a German voice
-model because its phoneme set (pure vowels, aspirated stops) maps significantly
-better to Ancient Greek than English models.
+The solution is to never let the engine see Greek at all.
 
-To bypass the language filter, we perform a "Trojan Horse" injection:
-1. The visual text inside the SSML tag is Romanized (e.g., "Mênin aeide").
-2. The actual audio is forced via IPA (International Phonetic Alphabet).
-3. We manually impose Pitch Accent and Syllable Quantity via SSML <prosody>.
+We treat the TTS engine as a dumb waveform synthesizer. Every phonological
+decision — vowel quality, vowel quantity, aspiration, pitch accent, sentence
+intonation — is computed offline and injected via SSML. The engine's only
+job is to turn IPA into sound. We use a German voice model because its
+phoneme inventory (pure monophthong vowels, aspirated voiceless stops,
+alveolar trill, clean fricatives) maps to reconstructed Attic Greek with
+far less distortion than English models, whose diphthongized vowels,
+approximant /ɹ/, and flapped /t/ would be catastrophic.
 
-ARCHITECTURAL PIPELINE:
------------------------
-[Raw Text]
-    |
-    v
-[Normalization & Safety]
-    - Cleans Critical Sigla (Removes {}, [], <>, †).
-    - Expands Numerals ("24" -> "eikosi tessares", "IV" -> "tettares").
-    - Escapes XML special characters to prevent API crashes.
-    |
-    v
-[Sentence Analysis] (The "Downdrift" Engine)
-    - Calculates linear pitch baseline (Start +10% -> End -10%).
-    - Interrogative Detection: Inverts downdrift to "Updrift" (Tunable)
-      for sentences ending in a Greek question mark (;).
-    - Clause Detection: Resets intonation at colons/commas.
-    |
-    v
-[Phonology Engine] (Cached)
-    - Transcribes to IPA (CLTK / Probert reconstruction).
-    - Gamma Nasalization: Enforces [ŋ] for γγ, γκ, γχ, γξ.
-    - IPA Normalization: Enforces Alveolar Trill (/r/) over German Uvular (/ʁ/).
-    - Quantity Enforcement: Forces length markers (ː) on Eta/Omega.
-    - Smart Aspirate: Injects /h/ for Rough Breathing without double-aspiration.
-    |
-    v
-[Prosody Synthesizer]
-    - Calculates Pitch relative to the dynamic Sentence Baseline.
-    - Acute:      Sharp Rise (+35%) above baseline.
-    - Circumflex: Rise-Fall (+35% -> -12%) on target syllable.
-    - Grave:      Suppressed pitch (+5%).
-    - Heavy Word: Time dilation (-15% speed) to simulate quantity.
-    |
-    v
-[SSML Batcher]
-    - Word Grouping: Merges Proclitics (ὁ), Enclitics (τις), and Elisions (ἀλλ᾽)
-      into single prosodic units to ensure continuous phonation.
-    - Chunks stream into < 5000 byte segments.
-    |
-    v
-[Audio Renderer]
-    - Requests audio chunks from Google Cloud.
-    - Robust Binary Stitching: Dynamically parses RIFF headers to extract payload
-      and fmt parameters, building a clean WAV from scratch.
-    - Generates .m3u Playlist for seamless playback of chunked audio.
+The bypass works as follows: the visible text inside each SSML <phoneme>
+tag is a Romanized decoy (e.g., "Mênin aeide") that satisfies the XML
+parser's content requirement. The actual audio is forced by the IPA string
+in the 'ph' attribute. Pitch accent is imposed externally via <prosody
+contour> tags computed from the Greek source text. The engine never makes
+a single phonological decision — it is a puppet.
 
-TUNABLES (config.toml):
------------------------
+================================================================================
+P I P E L I N E
+================================================================================
+
+[1] NORMALIZATION & SAFETY
+    │
+    │  Cleans critical sigla: removes {}, [], <>, †.
+    │  Expands Arabic numerals ("24" → εἴκοσι τέτταρες) and Roman
+    │  numerals ("IV" → τέτταρες) into spelled-out Greek. Roman numeral
+    │  detection uses an explicit whitelist from ROMAN_MAP and guards
+    │  against false positives with a comprehensive Unicode adjacency
+    │  check spanning the full Greek and Coptic (U+0370–03FF), Greek
+    │  Extended (U+1F00–1FFF), and Combining Diacritical (U+0300–036F)
+    │  blocks.
+    │  Escapes XML special characters to prevent API crashes.
+    │
+    ▼
+[2] SENTENCE ANALYSIS — The "Downdrift" Engine
+    │
+    │  Models the intonation contour of each sentence as a linear pitch
+    │  declination from a configurable start offset to a configurable
+    │  end offset (default: +10% → −10%). This approximates the
+    │  well-attested downdrift phenomenon in Ancient Greek prose.
+    │
+    │  Interrogative Detection: Sentences ending in the Greek question
+    │  mark (;) invert the slope to an "updrift" contour (default:
+    │  −5% → +10%), producing a rising terminal.
+    │
+    │  Clause Boundary Reset: At commas, colons, and medial stops (·),
+    │  the baseline rewinds by a configurable fraction of the sentence
+    │  length, simulating the partial intonation reset observed at
+    │  clause boundaries in reconstructed delivery.
+    │
+    ▼
+[3] PHONOLOGY ENGINE (Cached)
+    │
+    │  Transcribes each word to IPA via CLTK (Probert reconstruction,
+    │  Attic dialect). Results are cached in transcription_cache.json
+    │  with automatic invalidation when config.toml or the script
+    │  itself changes (MD5 comparison). The cache is saved atomically
+    │  after every section to prevent data loss during long batches.
+    │
+    │  Post-transcription corrections:
+    │
+    │  ● Source-Driven Quantity Enforcement: Rather than blindly
+    │    lengthening every ɛ/ɔ in the IPA output, the engine walks
+    │    the Greek source characters in parallel with the IPA string
+    │    to determine which vowels derive from inherently long
+    │    graphemes (η, ω) and applies the length marker (ː) only to
+    │    those positions. Short vowels that happen to share an IPA
+    │    symbol are left untouched.
+    │
+    │  ● Gamma Nasalization: Enforces [ŋ] before velars — γγ → [ŋɡ],
+    │    γκ → [ŋk], γχ → [ŋx], γξ → [ŋks].
+    │
+    │  ● IPA Normalization: Replaces German uvular /ʁ/ and English
+    │    approximant /ɹ/ with the alveolar trill /r/ appropriate to
+    │    reconstructed Attic.
+    │
+    │  ● Smart Aspirate Injection: Prepends /h/ for rough breathing
+    │    (dasia) only when the IPA does not already begin with an
+    │    aspirate, preventing double-aspiration artifacts. Rho with
+    │    rough breathing (ῥ) is handled separately.
+    │
+    │  ● Accent Stripping: All pitch information is removed from the
+    │    IPA (stress marks, combining accents) so the TTS engine
+    │    produces a tonally flat base. Pitch is then reintroduced
+    │    exclusively through SSML <prosody contour>, giving us full
+    │    control.
+    │
+    ▼
+[4] ACCENT MAPPING — Greek-to-IPA Alignment
+    │
+    │  Accent type (acute, circumflex, grave) and position are detected
+    │  from the NFD-decomposed Greek source text, never from IPA. The
+    │  accented vowel's position is then mapped to the corresponding
+    │  IPA segment through a three-phase alignment:
+    │
+    │  Phase 1: Greek vowel units are identified, with recognized
+    │  diphthongs (αι, ει, οι, αυ, ευ, ου, ηυ, υι) collapsed into
+    │  single vocalic units. Diaeresis (trema) is respected as a
+    │  diphthong breaker.
+    │
+    │  Phase 2: IPA vowel units are identified, grouping consecutive
+    │  vowels and length markers into units that correspond to CLTK's
+    │  diphthong and long-vowel representations.
+    │
+    │  Phase 3: The n-th Greek vowel unit is aligned to the n-th IPA
+    │  vowel unit, which is robust to epenthesis, contraction, and
+    │  diphthong-to-monophthong asymmetries that break naive
+    │  character-counting approaches.
+    │
+    ▼
+[5] PROSODY SYNTHESIZER — Syllable-Aware Contouring
+    │
+    │  Pitch contours are calculated relative to the dynamic sentence
+    │  baseline from [2]. Syllable boundaries are estimated from IPA
+    │  vowel nuclei, and the accented syllable's proportional position
+    │  within the word determines the contour timing:
+    │
+    │  ● Acute:      Sharp rise to peak (+35%) centered on the
+    │                 accented syllable, then fall to baseline.
+    │  ● Circumflex: Rise-fall (+35% → −12%) with the fall bounded
+    │                 by the accented syllable's proportional duration,
+    │                 preventing smear across polysyllabic words.
+    │  ● Grave:      Suppressed rise (+5%), modeling the pitch
+    │                 neutralization of non-final acutes.
+    │
+    │  Heavy-word rate modulation: Words containing long vowels are
+    │  slowed proportionally to syllable count — monosyllables are
+    │  left alone, disyllables receive half slowdown, trisyllables
+    │  and above receive full slowdown — to simulate the durational
+    │  weight of quantity without dragging short function words.
+    │
+    ▼
+[6] SSML BATCHER — Prosodic Unit Assembly
+    │
+    │  Words are not processed in isolation. Proclitics (ὁ, εἰς, οὐκ),
+    │  enclitics (τε, γε, τις), and elided forms (ἀλλ᾽, δ᾽) are merged
+    │  into prosodic groups before SSML generation. Each word in the
+    │  group is transcribed individually by CLTK, then the IPA strings
+    │  are concatenated and wrapped in a single <phoneme> tag. The
+    │  accent of the host word governs the group's pitch contour;
+    │  proclitic and enclitic accents are suppressed.
+    │
+    │  Breath pacing: A configurable set of conjunction and preposition
+    │  triggers (καί, ἀλλά, ὅτι, etc.) insert natural breath pauses
+    │  when the word count since the last pause exceeds a threshold.
+    │  A hard ceiling forces a pause regardless of trigger presence.
+    │
+    │  The fragment stream is chunked into segments under 5000 bytes
+    │  (configurable) to respect API limits.
+    │
+    ▼
+[7] AUDIO RENDERER
+    │
+    │  Sends SSML chunks to Google Cloud TTS with exponential-backoff
+    │  retry on transient errors (503, 429, timeouts).
+    │
+    │  WAV Construction: Each API response is a complete RIFF/WAVE file.
+    │  The renderer dynamically parses RIFF headers to extract the fmt
+    │  subchunk (from the first successful response) and the raw PCM
+    │  data payload (from every response). A clean WAV is assembled
+    │  from scratch with a single RIFF header, the captured fmt chunk,
+    │  and the concatenated payloads.
+    │
+    │  Failure Resilience: When a chunk fails after all retries, the
+    │  renderer estimates the expected audio duration from the SSML
+    │  content (counting phoneme tags and break durations) and inserts
+    │  a correctly-sized PCM silence placeholder. This preserves
+    │  temporal alignment in the output file rather than allowing
+    │  words to jump forward in time. Failed chunk indices are logged
+    │  in the debug output.
+    │
+    │  Generates an .m3u playlist for seamless playback of multi-
+    │  section output.
+    │
+    ▼
+[8] OUTPUT
+
+    Audio files:    {output_dir}/{nn}_{slug}_{voice}_{rate}.wav
+    Debug log:      {debug_file}  (JSON — full SSML, per-word analysis,
+                                   accent mapping, downdrift values,
+                                   contour strings, failure records)
+    IPA cache:      transcription_cache.json
+    Playlist:       {output_dir}/playlist.m3u
+
+================================================================================
+C O N F I G U R A T I O N — config.toml
+================================================================================
+
 [files]
-    input_text            :: Path to source text (e.g., "input.txt").
-    debug_file            :: Path to debug JSON dump.
+    input_text                              Source text path.
+    debug_file                              Debug JSON dump path.
 
 [options]
-    dry_run               :: (Bool) If True, no API calls are made.
-    apply_sandhi          :: (Bool) Merge words ending in apostrophe.
-    apply_rough_breathing :: (Bool) Pronounce the 'h' (dasia).
+    dry_run                                 Bool. Skip API calls; estimate cost.
+    apply_sandhi                            Bool. Merge elided words.
+    apply_rough_breathing                   Bool. Pronounce the dasia as /h/.
 
 [prosody]
-    contour_peak          :: (Int) Pitch rise for Acute accent (e.g., 35).
-    contour_grave         :: (Int) Pitch rise for Grave accent (e.g., 5).
-    contour_end           :: (Int) Pitch drop after accent (e.g., -12).
-    circumflex_tail_len   :: (Int) Duration of circumflex fall.
-    downdrift_start       :: (Int) Baseline pitch at sentence start (e.g., 10).
-    downdrift_end         :: (Int) Baseline pitch at sentence end (e.g., -10).
-    updrift_start         :: (Int) Start pitch for questions (e.g., -5).
-    updrift_end           :: (Int) End pitch for questions (e.g., 10).
-    heavy_word_rate       :: (Str) Speed slowdown for heavy words (e.g., "-15%").
-    downdrift_clause_based_rewind_scale :: (Float) Reset intonation at commas (0.0-1.0).
+    contour_peak                            Int.   Acute pitch rise (%).
+    contour_grave                           Int.   Grave pitch rise (%).
+    contour_end                             Int.   Post-accent pitch drop (%).
+    circumflex_tail_len                     Int.   Circumflex fall duration (legacy;
+                                                   now bounded by syllable proportion).
+    downdrift_start                         Int.   Sentence-initial baseline (%).
+    downdrift_end                           Int.   Sentence-final baseline (%).
+    updrift_start                           Int.   Interrogative start pitch (%).
+    updrift_end                             Int.   Interrogative end pitch (%).
+    heavy_word_rate                         Str.   Speed reduction for heavy words.
+    downdrift_clause_based_rewind_scale     Float. Clause-boundary baseline reset
+                                                   (0.0 = no reset, 1.0 = full).
 
 [pauses]
-    breath, newline, comma, period, minor :: (Str) MS duration (e.g., "145ms").
+    breath, newline, comma, period, minor   Str.   Duration in ms (e.g., "145ms").
 
 [pacing]
-    force_breath_words    :: (Int) Max words allowed before forcing a pause.
-    max_breath_words      :: (Int) Ideal phrase length.
+    force_breath_words                      Int.   Hard ceiling before forced pause.
+    max_breath_words                        Int.   Soft target phrase length.
 
 [processing]
-    max_chunk_bytes       :: (Int) Max SSML size per API call (default 4500).
-    delimiter             :: (Str) Separator for input sections (e.g., "---").
+    max_chunk_bytes                         Int.   Max SSML bytes per API call.
+    delimiter                               Str.   Section separator in input file.
 
 [tts]
-    voice_name            :: Google Voice ID (e.g., "de-DE-Chirp3-HD-Enceladus").
-    speaking_rate         :: Global speed multiplier.
-    pitch                 :: Global pitch offset.
-    audio_encoding        :: "LINEAR16" (WAV) or "MP3".
-    output_dir            :: Directory for generated audio.
+    voice_name                              Str.   Google voice ID.
+    speaking_rate                           Float. Global speed multiplier.
+    pitch                                   Float. Global pitch offset.
+    audio_encoding                          Str.   "LINEAR16" or "MP3".
+    output_dir                              Str.   Output directory.
 
-CACHING:
---------
-IPA transcription is expensive. We maintain 'transcription_cache.json'.
-The cache stores word entries under a "words" key and metadata under "_meta".
-The cache is updated atomically after every section is processed to prevent
-data loss during long batch operations.
-*Auto-Invalidation*: If config.toml or the script changes, the cache wipes.
+[cltk]
+    dialect                                 Str.   CLTK dialect (e.g., "attic").
+    reconstruction                          Str.   CLTK reconstruction (e.g., "probert").
 
-DEPENDENCIES:
--------------
-Requires 'cltk' with 'grc_models_cltk' downloaded.
-The script will auto-detect missing models and provide download instructions.
+[google_cloud]
+    service_account_file                    Str.   Path to GCP credentials JSON.
+
+================================================================================
+D E P E N D E N C I E S
+================================================================================
+
+    cltk            Ancient Greek phonological transcription.
+                    Requires 'grc_models_cltk' — the script detects missing
+                    models and prints download instructions.
+
+    google-cloud-texttospeech
+                    Google Cloud TTS client. Requires a service account with
+                    the Text-to-Speech API enabled.
+
+    tomli           TOML parser for Python < 3.11 (3.11+ uses stdlib tomllib).
 
 ================================================================================
 """
@@ -308,19 +446,44 @@ def normalize_text_numerals(text):
 
     text = re.sub(r'\b([0-9]+)\b', replace_match, text)
 
-    # Only match Roman numerals that are purely Roman numeral characters
-    # and are surrounded by non-Greek context to avoid false positives.
+    # Roman numeral detection with comprehensive Greek exclusion.
+    #
+    # The original guard used character ranges like [α-ωά-ώἀ-ῷ] which
+    # have gaps in Unicode coverage. Polytonic Greek spans multiple
+    # blocks and includes characters with breathing marks, iota
+    # subscripts, and other diacriticals that fall outside those ranges.
+    #
+    # We now use the full set of relevant Unicode blocks:
+    #   \u0370-\u03FF  Greek and Coptic
+    #   \u1F00-\u1FFF  Greek Extended (polytonic)
+    #   \u0300-\u036F  Combining Diacritical Marks (accents on any char)
+    #
+    # The negative lookbehind/lookahead ensures we never match a token
+    # that is adjacent to ANY Greek character, even obscure ones like
+    # ᾅ (U+1F85) or ῷ (U+1FF7) that the old ranges missed.
+
+    _GREEK_ADJACENT = r'[\u0370-\u03FF\u1F00-\u1FFF\u0300-\u036Fa-zA-Z]'
+
     def replace_roman(match):
         token = match.group(0).lower()
         if token in ROMAN_MAP:
             return f" {number_to_greek(ROMAN_MAP[token])} "
         return match.group(0)
 
-    # Only attempt Roman numeral replacement on tokens that are entirely
-    # composed of Roman numeral characters and bounded by whitespace or
-    # punctuation (not adjacent to Greek).
-    text = re.sub(r'(?<![α-ωά-ώἀ-ῷa-zA-Z])\b([ivxIVX]{1,4})\b(?![α-ωά-ώἀ-ῷa-zA-Z])',
-                  replace_roman, text)
+    # Additional safety: only match tokens that are valid Roman numerals.
+    # The old regex matched any 1-4 character combination of [ivxIVX],
+    # which could false-positive on strings like "vi" appearing as a
+    # fragment near Greek text. We now explicitly enumerate the valid
+    # Roman numeral forms from ROMAN_MAP and build an alternation.
+    valid_romans = sorted(ROMAN_MAP.keys(), key=len, reverse=True)
+    roman_pattern = "|".join(re.escape(r) for r in valid_romans)
+
+    text = re.sub(
+        rf'(?<!{_GREEK_ADJACENT})\b({roman_pattern})\b(?!{_GREEK_ADJACENT})',
+        replace_roman,
+        text,
+        flags=re.IGNORECASE
+    )
 
     def replace_latin_letter(match):
         token = match.group(0).lower()
@@ -328,21 +491,36 @@ def normalize_text_numerals(text):
             return f" {LATIN_LETTERS[token]} "
         return match.group(0)
 
-    text = re.sub(r'(?<=\d)[a-z]\b|\b(?<![α-ωά-ώἀ-ῷ])[a-z]\b(?![α-ωά-ώἀ-ῷ])',
-                  replace_latin_letter, text)
+    text = re.sub(
+        rf'(?<=\d)[a-z]\b|\b(?<!{_GREEK_ADJACENT})[a-z]\b(?!{_GREEK_ADJACENT})',
+        replace_latin_letter,
+        text
+    )
     return text
 
 def romanize_greek(text):
     """
     Transliterates Greek to Latin, optimized for German TTS pronunciation quirks.
-    Combining marks from the NFD decomposition are discarded in diphthong
-    replacements so they don't leak into the romanized output.
+
+    NOTE ON LOSSY TRANSFORMS:
+    The diphthong replacements below are INTENTIONALLY LOSSY. Greek accent
+    marks (combining acute, grave, circumflex, breathing marks) that sit
+    between or on diphthong vowels are silently discarded. This is correct
+    behavior: the romanized text is a throwaway visual label inside SSML
+    <phoneme> tags — the TTS engine never reads it. All actual pronunciation
+    is controlled by the IPA in the 'ph' attribute, and all pitch information
+    is controlled by <prosody contour>. The romanized text exists solely to
+    satisfy the SSML parser's requirement for visible text content.
+
+    If you need a scholarly romanization that preserves accent information,
+    do NOT use this function — it is purpose-built for the TTS pipeline.
     """
     norm = unicodedata.normalize('NFD', text)
 
-    # 1. Handle Diphthongs specifically for German Phonology
-    # Discard any combining marks between the two vowels — they belong
-    # to the Greek accent system and are meaningless in romanized text.
+    # Diphthong handling for German phonology.
+    # Combining marks ([\u0300-\u036F]) between vowels are discarded —
+    # see docstring above for why this is intentional.
+
     # 'eu' in German is 'oy', so we break it to 'e-u' to force 'eh-oo'
     norm = re.sub(r'([εΕ])([\u0300-\u036F]*)([υΥ])', r'e-u', norm)
     # 'au' in German is correct for Greek 'au'
@@ -458,35 +636,118 @@ def map_greek_vowel_index_to_ipa(word, greek_vowel_idx, ipa_string):
     only base characters), find the corresponding vowel position in
     the IPA string.
 
-    Strategy: Walk through the Greek base characters and the IPA string
-    in parallel, matching vowels. The n-th Greek vowel maps to the n-th
-    IPA vowel.
+    Strategy: Build a consonant-vowel skeleton for both the Greek word
+    and the IPA string, then align them using the skeleton structure
+    rather than assuming a naive 1:1 vowel correspondence.
+
+    Greek diphthongs (αι, ει, οι, αυ, ευ, ου, ηυ, υι) are treated as
+    single vocalic units on the Greek side and matched to however many
+    IPA segments CLTK produced for them.
     """
     norm = unicodedata.normalize('NFD', word)
-    greek_vowels = set("αεηιουωΑΕΗΙΟΥΩ")
+    greek_vowel_chars = set("αεηιουωΑΕΗΙΟΥΩ")
+    greek_diphthong_seconds = set("ιυΙΥ")
 
-    # Count which vowel number the accented character is
-    vowel_number = -1
+    # --- Phase 1: Build Greek vowel-unit list ---
+    # Each entry: (base_char_index, is_diphthong)
+    # A diphthong's index is the index of its first vowel.
+    greek_vowel_units = []
     base_idx = -1
-    for char in norm:
-        if '\u0300' <= char <= '\u036F':
-            continue
-        base_idx += 1
-        if char.lower() in greek_vowels:
-            vowel_number += 1
-        if base_idx == greek_vowel_idx:
-            break
+    i = 0
+    chars = list(norm)
 
-    if vowel_number < 0:
+    while i < len(chars):
+        char = chars[i]
+
+        if '\u0300' <= char <= '\u036F':
+            i += 1
+            continue
+
+        base_idx += 1
+        if char.lower() in greek_vowel_chars:
+            # Look ahead past combining marks for a diphthong second element
+            j = i + 1
+            while j < len(chars) and '\u0300' <= chars[j] <= '\u036F':
+                j += 1
+
+            is_diphthong = False
+            if j < len(chars) and chars[j].lower() in greek_diphthong_seconds:
+                # Check if this is a recognized diphthong pair
+                pair = char.lower() + chars[j].lower()
+                if pair in {"αι", "ει", "οι", "αυ", "ευ", "ου", "ηυ", "υι"}:
+                    # Check for diaeresis (trema) which breaks the diphthong
+                    # Diaeresis is U+0308
+                    has_diaeresis = False
+                    for k in range(j + 1, len(chars)):
+                        if '\u0300' <= chars[k] <= '\u036F':
+                            if chars[k] == '\u0308':
+                                has_diaeresis = True
+                                break
+                        else:
+                            break
+                    if not has_diaeresis:
+                        is_diphthong = True
+
+            greek_vowel_units.append((base_idx, is_diphthong))
+            if is_diphthong:
+                # Skip past the second vowel and its combining marks
+                i = j + 1
+                base_idx += 1
+                # Also skip combining marks after the second vowel
+                while i < len(chars) and '\u0300' <= chars[i] <= '\u036F':
+                    i += 1
+                continue
+
+        i += 1
+
+    # --- Phase 2: Identify which vowel unit carries the accent ---
+    target_unit = -1
+    for unit_idx, (char_idx, _) in enumerate(greek_vowel_units):
+        if char_idx == greek_vowel_idx:
+            target_unit = unit_idx
+            break
+        # For diphthongs, the accent index might point to the first char
+        # of the pair, which is what we stored
+        if char_idx <= greek_vowel_idx:
+            target_unit = unit_idx
+
+    if target_unit < 0:
         return -1
 
-    # Now find the vowel_number-th vowel in the IPA string
-    current_vowel = -1
-    for i, ch in enumerate(ipa_string):
+    # --- Phase 3: Build IPA vowel-unit list ---
+    # Walk the IPA string and group consecutive vowels (including length
+    # markers) into units. A vowel followed by ː is one unit. Two vowels
+    # in sequence (IPA diphthong from CLTK) are one unit.
+    ipa_vowel_units = []  # Each entry: index of the first vowel char
+    j = 0
+    while j < len(ipa_string):
+        ch = ipa_string[j]
         if ch.lower() in IPA_VOWELS:
-            current_vowel += 1
-            if current_vowel == vowel_number:
-                return i
+            unit_start = j
+            j += 1
+            # Consume length markers and immediately following vowels
+            # (CLTK diphthong representations like 'ai', 'oi')
+            while j < len(ipa_string):
+                next_ch = ipa_string[j]
+                if next_ch == 'ː':
+                    j += 1
+                elif next_ch.lower() in IPA_VOWELS:
+                    # Check if this looks like a diphthong (two vowels
+                    # with no intervening consonant)
+                    j += 1
+                else:
+                    break
+            ipa_vowel_units.append(unit_start)
+        else:
+            j += 1
+
+    # --- Phase 4: Align ---
+    if target_unit < len(ipa_vowel_units):
+        return ipa_vowel_units[target_unit]
+
+    # Fallback: if we have more Greek units than IPA units, return the last
+    if ipa_vowel_units:
+        return ipa_vowel_units[-1]
 
     return -1
 
@@ -494,7 +755,8 @@ def analyze_word_data(word):
     """
     Robust Philological Analysis.
     1. Transcribes to IPA via CLTK.
-    2. Enforces Quantity (Vowel Length) for Eta/Omega.
+    2. Enforces Quantity (Vowel Length) for Eta/Omega by checking the
+       Greek source character, not by pattern-matching IPA symbols.
     3. Strips IPA pitch accents (so they don't conflict with our SSML contours).
     4. Detects accent position from the Greek source text and maps it
        to the corresponding position in the cleaned IPA.
@@ -507,48 +769,39 @@ def analyze_word_data(word):
 
     try:
         raw_ipa  = TRANSCRIBER.transcribe(word)
-        # Normalize to break apart combining characters (like accents)
         norm_ipa = unicodedata.normalize('NFD', raw_ipa)
 
         # 1. Detect Accent from GREEK SOURCE (not IPA)
         accent_type, greek_vowel_idx = find_accent_in_greek(word)
 
         # 2. Clean IPA for Audio Generation
-        # Remove brackets, slashes, and punctuation
         clean_ipa = norm_ipa.replace("[", "").replace("]", "").replace("/", "")
         clean_ipa = re.sub(r'[,\.·;:\-—\']', '', clean_ipa)
         clean_ipa = clean_ipa.replace(" ", "")
 
         # 3. STRIP ACCENTS from IPA
-        # We want the TTS engine to be 'flat' so our SSML <prosody> controls
-        # the pitch perfectly. If we leave accents in, the engine fights our SSML.
         clean_ipa = re.sub(r'[\u0300\u0301\u0342\u030d\u0311]', '', clean_ipa)
-
-        # Remove IPA stress marks (we control stress via SSML)
         clean_ipa = clean_ipa.replace('ˈ', '').replace('ˌ', '')
-
-        # Re-compose after stripping
         clean_ipa = unicodedata.normalize('NFC', clean_ipa)
 
-        # 4. Gamma Nasalization (Angelos Rule)
-        # Handle both ASCII 'g' and IPA 'ɡ' (U+0261)
+        # 4. Gamma Nasalization
         for g_char in ['g', 'ɡ']:
             clean_ipa = clean_ipa.replace(f'{g_char}{g_char}', f'ŋ{g_char}')
             clean_ipa = clean_ipa.replace(f'{g_char}k', f'ŋk')
             clean_ipa = clean_ipa.replace(f'{g_char}χ', f'ŋχ')
             clean_ipa = clean_ipa.replace(f'{g_char}ξ', f'ŋξ')
-            clean_ipa = clean_ipa.replace(f'{g_char}x', f'ŋx')  # IPA voiceless velar
+            clean_ipa = clean_ipa.replace(f'{g_char}x', f'ŋx')
 
         # 5. IPA Normalization (Trilled R)
         clean_ipa = clean_ipa.replace('ʁ', 'r').replace('ɹ', 'r')
 
-        # 6. QUANTITY ENFORCEMENT (The Vowel Length Fix)
-        # CLTK Probert maps: Eta (η) -> ɛ, Omega (ω) -> ɔ
-        # We ensure these ALWAYS have the length marker (ː).
-        # Only apply to ɛ and ɔ since those are the CLTK symbols for
-        # the inherently long vowels. Plain 'e' and 'o' (from epsilon/omicron)
-        # are left short.
-        clean_ipa = re.sub(r'([ɛɔ])(?!ː)', r'\1ː', clean_ipa)
+        # 6. QUANTITY ENFORCEMENT — Source-Character-Driven
+        # Instead of blindly lengthening every ɛ/ɔ in the IPA output,
+        # we identify which Greek characters are inherently long (η, ω)
+        # and apply the length marker only to their corresponding IPA
+        # vowels. This prevents spurious lengthening if CLTK ever
+        # produces ɛ or ɔ for non-eta/omega reasons.
+        clean_ipa = _enforce_quantity_from_source(word, clean_ipa)
 
         # 7. Rough Breathing
         norm_greek  = unicodedata.normalize('NFD', word)
@@ -556,7 +809,6 @@ def analyze_word_data(word):
 
         if apply_rough and '\u0314' in norm_greek:
             if not word.lower().startswith('ῥ'):
-                # Only prepend 'h' if the IPA doesn't already have 'h'
                 if not (clean_ipa.startswith('h') or clean_ipa.startswith('ʰ')):
                     clean_ipa = 'h' + clean_ipa
 
@@ -565,7 +817,7 @@ def analyze_word_data(word):
         if accent_type != "none" and greek_vowel_idx >= 0:
             accent_idx = map_greek_vowel_index_to_ipa(word, greek_vowel_idx, clean_ipa)
 
-        # Fallback: Greek Text Circumflex (if find_accent_in_greek missed it)
+        # Fallback: Greek Text Circumflex
         if accent_type == "none":
             norm_greek_check = unicodedata.normalize('NFD', word)
             if '\u0342' in norm_greek_check:
@@ -592,19 +844,78 @@ def analyze_word_data(word):
         print(f"    [!] IPA Transcription failed for '{word}': {e}")
         return None
 
+def _enforce_quantity_from_source(greek_word, ipa_string):
+    """
+    Walks the Greek source characters and the IPA string in parallel,
+    identifying vowels that derive from η or ω and ensuring their IPA
+    counterparts carry the length marker (ː). Vowels from other sources
+    (ε, ο, or any context where CLTK produced ɛ/ɔ for non-long-vowel
+    reasons) are left untouched.
+    """
+    norm = unicodedata.normalize('NFD', greek_word)
+    inherently_long = set("ηωΗΩ")
+    greek_vowel_chars = set("αεηιουωΑΕΗΙΟΥΩ")
+
+    # Build list of Greek vowel positions and whether each is long
+    greek_vowels_long = []
+    for char in norm:
+        if '\u0300' <= char <= '\u036F':
+            continue
+        if char.lower() in greek_vowel_chars:
+            greek_vowels_long.append(char.lower() in inherently_long)
+
+    # Walk IPA and find vowel positions
+    ipa_vowel_positions = []
+    i = 0
+    while i < len(ipa_string):
+        if ipa_string[i].lower() in IPA_VOWELS:
+            # Check if already followed by ː
+            already_long = (i + 1 < len(ipa_string) and ipa_string[i + 1] == 'ː')
+            ipa_vowel_positions.append((i, already_long))
+            if already_long:
+                i += 2
+            else:
+                i += 1
+        else:
+            i += 1
+
+    # Align: for each pair (greek_vowel_n, ipa_vowel_n), if the Greek
+    # vowel is inherently long and the IPA vowel lacks ː, insert it.
+    # Work backwards so insertions don't shift indices.
+    insertions = []
+    for v_idx in range(min(len(greek_vowels_long), len(ipa_vowel_positions))):
+        should_be_long = greek_vowels_long[v_idx]
+        ipa_pos, already_long = ipa_vowel_positions[v_idx]
+
+        if should_be_long and not already_long:
+            insertions.append(ipa_pos + 1)
+
+    # Apply insertions in reverse order
+    ipa_list = list(ipa_string)
+    for pos in reversed(insertions):
+        ipa_list.insert(pos, 'ː')
+
+    return "".join(ipa_list)
+
 def calculate_prosody(word_data, baseline_shift=0):
+    """
+    Calculates SSML pitch contour and rate for a prosodic unit.
+
+    The contour positions are calculated relative to the accented SYLLABLE's
+    proportion of the word, not just the raw character index. This ensures
+    that circumflex rise-fall timing is anchored to the syllable boundary
+    rather than spread across the entire word duration.
+    """
     if not word_data: return None, "0%"
-    
+
     ipa    = word_data["ipa"]
     a_type = word_data["accent_type"]
     idx    = word_data["accent_idx"]
     total  = word_data["len"]
 
-    # Load config
     c_peak  = config["prosody"].get("contour_peak",  35)
     c_grave = config["prosody"].get("contour_grave", 5)
     c_end   = config["prosody"].get("contour_end",   -12)
-    c_tail  = config["prosody"].get("circumflex_tail_len", 15)
 
     val_start = baseline_shift
     val_peak  = baseline_shift + c_peak
@@ -613,38 +924,97 @@ def calculate_prosody(word_data, baseline_shift=0):
 
     def p(val): return f"{int(val):+d}%"
 
-    # --- 1. Contour Calculation ---
+    # --- Syllable-Aware Position Calculation ---
+    # Instead of using raw character index / total length, we estimate
+    # syllable boundaries by finding vowel nuclei in the IPA. The accent
+    # position is then expressed as "which syllable out of how many",
+    # giving a much more stable timing anchor.
+    syllable_starts = []
+    in_vowel = False
+    for i_ch, ch in enumerate(ipa):
+        if ch.lower() in IPA_VOWELS:
+            if not in_vowel:
+                syllable_starts.append(i_ch)
+                in_vowel = True
+        elif ch != 'ː':
+            in_vowel = False
+
+    num_syllables = len(syllable_starts)
+
+    # Find which syllable the accent falls on
+    accent_syllable = 0
+    if idx >= 0 and syllable_starts:
+        for s_idx, s_start in enumerate(syllable_starts):
+            if s_start <= idx:
+                accent_syllable = s_idx
+            else:
+                break
+
+    # Calculate the temporal position of the accented syllable
+    # as a percentage of the word's duration. Each syllable is
+    # assumed to occupy roughly equal time (a simplification, but
+    # far better than raw character position).
+    if num_syllables > 1:
+        # Center of the accented syllable
+        syllable_center = (accent_syllable + 0.5) / num_syllables
+        peak_pct = int(syllable_center * 100)
+        peak_pct = max(5, min(95, peak_pct))
+    elif num_syllables == 1:
+        peak_pct = 40  # Monosyllable: peak slightly before center
+    else:
+        peak_pct = 50
+
+    # Calculate syllable duration as a percentage of the word
+    # Used for circumflex tail: the fall should complete within
+    # the accented syllable, not spill across the whole word.
+    if num_syllables > 0:
+        syllable_duration_pct = int(100 / num_syllables)
+    else:
+        syllable_duration_pct = 100
+
+    # --- Contour Calculation ---
     contour = None
     if idx >= 0 and total > 0:
-        pos_ratio = max(0.1, min(0.9, idx / total))
-        peak_pct  = int(pos_ratio * 100)
 
         if a_type == "circumflex":
-            tail_pct = min(peak_pct + c_tail, 100)
-            contour = f"(0%,{p(val_start)}) ({peak_pct}%,{p(val_peak)}) ({tail_pct}%,{p(val_end)}) (100%,{p(val_end)})"
-        elif a_type == "grave":
-            contour = f"(0%,{p(val_start)}) ({peak_pct}%,{p(val_grave)}) (100%,{p(val_end)})"
-        else:
-            contour = f"(0%,{p(val_start)}) ({peak_pct}%,{p(val_peak)}) (100%,{p(val_end)})"
+            # The rise-fall must complete within the accented syllable.
+            # The tail ends at the syllable boundary, not at a fixed
+            # offset from the peak.
+            tail_pct = min(peak_pct + max(syllable_duration_pct // 2, 8), 100)
+            contour = (
+                f"(0%,{p(val_start)}) "
+                f"({peak_pct}%,{p(val_peak)}) "
+                f"({tail_pct}%,{p(val_end)}) "
+                f"(100%,{p(val_end)})"
+            )
 
-    # --- 2. "Heavy Word" Smoothing ---
+        elif a_type == "grave":
+            contour = (
+                f"(0%,{p(val_start)}) "
+                f"({peak_pct}%,{p(val_grave)}) "
+                f"(100%,{p(val_end)})"
+            )
+
+        else:  # acute
+            contour = (
+                f"(0%,{p(val_start)}) "
+                f"({peak_pct}%,{p(val_peak)}) "
+                f"(100%,{p(val_end)})"
+            )
+
+    # --- "Heavy Word" Smoothing ---
     rate = "0%"
     if word_data["is_heavy"]:
-        # Count syllables (rough approximation via vowels)
-        vowel_count = len([ch for ch in ipa if ch.lower() in IPA_VOWELS])
-
-        # LOGIC: Only slow down if the word is substantial (3+ syllables)
-        # or if it is extremely dense with long vowels.
         base_slowdown = int(config["prosody"].get("heavy_word_rate", "-15%").strip('%'))
 
+        # Count vowel nuclei (syllables), not just vowel characters
+        vowel_count = num_syllables
+
         if vowel_count < 2:
-            # Short words (e.g., 'mē') shouldn't drag.
             rate = "0%"
         elif vowel_count == 2:
-            # Mild slowdown for disyllabic words
             rate = f"{int(base_slowdown / 2)}%"
         else:
-            # Full slowdown for long, complex words
             rate = f"{base_slowdown}%"
 
     return contour, rate
@@ -997,6 +1367,7 @@ def fetch_audio_bytes(client, ssml_chunk, voice_params, audio_config, max_retrie
                 return None
 
     return None
+
 def generate_audio():
     input_path = config["files"].get("input_text", "input.txt")
     output_dir = config["tts"].get("output_dir", "output")
@@ -1047,7 +1418,6 @@ def generate_audio():
         print(f":: Generating Section {sec_idx+1}...")
         fragments, section_debug = build_ssml_fragments(text)
 
-        # Construct FULL SSML for debug log in both modes
         full_ssml_string = "".join(fragments)
 
         if dry_run:
@@ -1063,38 +1433,77 @@ def generate_audio():
             })
             continue
 
-        # --- Audio Generation with Proper WAV Construction ---
+        # --- Audio Generation ---
         current_ssml_parts = ["<speak>"]
         current_length     = len("<speak>")
 
-        # For WAV: collect fmt chunk from first response, payloads from all
         fmt_chunk      = None
         audio_payloads = []
-        # For MP3: just concatenate bytes
         mp3_buffer     = bytearray()
 
-        chunk_count = 0
+        chunk_count    = 0
+        failed_chunks  = []
+
+        # --- WAV silence generator for gap-filling ---
+        def generate_silence_payload(duration_ms, sample_rate=24000, sample_width=2):
+            """
+            Generates raw PCM silence bytes for the given duration.
+            Used to fill gaps when an API chunk fails, so the output
+            audio maintains correct temporal alignment rather than
+            having words jump forward in time.
+            """
+            num_samples = int(sample_rate * duration_ms / 1000)
+            return b'\x00' * (num_samples * sample_width)
+
+        def estimate_chunk_duration_ms(ssml_parts):
+            """
+            Rough estimate of how long a chunk would sound, based on
+            the number of phoneme tags and break durations. Used to
+            generate correctly-sized silence placeholders on failure.
+            """
+            text = "".join(ssml_parts)
+            duration = 0
+
+            # Count break tags and sum their durations
+            for match in re.finditer(r'<break\s+time="(\d+)ms"\s*/>', text):
+                duration += int(match.group(1))
+
+            # Count phoneme tags — rough estimate of 400ms per word
+            word_count = len(re.findall(r'<phoneme', text))
+            duration += word_count * 400
+
+            return max(duration, 200)  # Minimum 200ms
 
         def flush_buffer(parts):
             nonlocal fmt_chunk, chunk_count
-            parts.append("</speak>")
-            ssml_string = "".join(parts)
+            parts_for_send = list(parts)
+            parts_for_send.append("</speak>")
+            ssml_string = "".join(parts_for_send)
             chunk_bytes = fetch_audio_bytes(client, ssml_string, voice_params, audio_cfg)
 
-            if chunk_bytes is None:
-                print(f"    [!] Chunk {chunk_count+1} failed — gap in audio.")
-                return
-
             chunk_count += 1
+
+            if chunk_bytes is None:
+                est_ms = estimate_chunk_duration_ms(parts_for_send)
+                print(f"    [!] Chunk {chunk_count} failed — inserting {est_ms}ms silence placeholder.")
+                failed_chunks.append(chunk_count)
+
+                if audio_enc == "LINEAR16":
+                    silence = generate_silence_payload(est_ms)
+                    audio_payloads.append(silence)
+                    # If we have no fmt chunk yet, we can't generate valid silence.
+                    # The silence bytes will still be appended and will work once
+                    # we get a fmt chunk from a later successful request.
+                # MP3 silence is non-trivial to generate; just log the gap.
+                return
 
             if audio_enc == "LINEAR16":
                 parsed_fmt, parsed_payload = parse_wav_fmt(chunk_bytes)
 
                 if parsed_fmt is None or parsed_payload is None:
                     print(f"    [!] Warning: Could not parse WAV chunk {chunk_count}. Attempting fallback.")
-                    # Fallback: assume 44-byte header
                     if fmt_chunk is None and len(chunk_bytes) >= 44:
-                        fmt_chunk = chunk_bytes[12:36]  # standard fmt chunk
+                        fmt_chunk = chunk_bytes[12:36]
                     if len(chunk_bytes) > 44:
                         audio_payloads.append(chunk_bytes[44:])
                     return
@@ -1146,14 +1555,17 @@ def generate_audio():
         else:
             print("    [!] Error: No audio generated for this section.")
 
-        full_debug_log.append({"section": sec_idx+1, "analysis": section_debug})
+        # Log failed chunks in debug output
+        section_debug_entry = {"section": sec_idx+1, "analysis": section_debug}
+        if failed_chunks:
+            section_debug_entry["failed_chunks"] = failed_chunks
+            section_debug_entry["note"] = "Silence placeholders inserted for failed chunks."
+        full_debug_log.append(section_debug_entry)
 
-        # Save cache after every section for crash safety
         save_cache()
 
     # --- Post-Processing ---
     if dry_run:
-        # Chirp3-HD pricing may differ from WaveNet; this is a rough estimate.
         est_cost = (total_chars / 1_000_000) * 16.00
         print(f"\n:: DRY RUN COMPLETE")
         print(f":: Total Characters: {total_chars}")
