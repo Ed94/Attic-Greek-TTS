@@ -121,12 +121,6 @@ except ImportError:
 if not os.path.exists("config.toml"):
     raise FileNotFoundError("CRITICAL: config.toml not found.")
 
-def get_file_hash(filepath):
-    """Generates MD5 hash of a file for cache invalidation."""
-    if not os.path.exists(filepath): return ""
-    with open(filepath, "rb") as f:
-        return hashlib.md5(f.read()).hexdigest()
-
 with open("config.toml", "rb") as f:
     config = tomllib.load(f)
 
