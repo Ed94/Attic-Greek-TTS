@@ -63,8 +63,9 @@ P I P E L I N E
     │
     │  Clause Boundary Reset: At commas, colons, and medial stops (·),
     │  the baseline rewinds by a configurable fraction of the sentence
-    │  length, simulating the partial intonation reset observed at
-    │  clause boundaries in reconstructed delivery.
+    │  length (downdrift_clause_based_rewind_scale), simulating the
+    │  partial intonation reset observed at clause boundaries in
+    │  reconstructed delivery.
     │
     ▼
 [3] PHONOLOGY ENGINE (Cached)
@@ -81,17 +82,25 @@ P I P E L I N E
     │  ● Source-Driven Quantity Enforcement: The engine uses a shared
     │    vowel-unit scanner (scan_greek_vowel_units) to walk the Greek
     │    source in parallel with the IPA string, identifying which
-    │    vowels derive from inherently long graphemes (η, ω) and
-    │    applying the length marker (ː) only to those positions.
-    │    Diphthongs are collapsed into single vocalic units using the
-    │    same scanner that accent mapping uses, ensuring consistent
-    │    alignment everywhere. Short vowels that happen to share an
-    │    IPA symbol are left untouched.
+    │    vowels are inherently long. Length is determined from three
+    │    sources: inherently long graphemes (η, ω), circumflex accent
+    │    (perispomeni — a circumflex can only appear on a long vowel,
+    │    so its presence guarantees length even on α, ι, υ), and
+    │    explicit macrons (combining macron U+0304, as in ᾱ, ῑ, ῡ).
+    │    The length marker (ː) is applied only to positions confirmed
+    │    long by one of these three signals. Diphthongs are collapsed
+    │    into single vocalic units using the same scanner that accent
+    │    mapping uses, ensuring consistent alignment everywhere. Short
+    │    vowels that happen to share an IPA symbol are left untouched.
     │
     │  ● Gamma Nasalization: Enforces [ŋ] before velars — γγ → [ŋɡ],
     │    γκ → [ŋk], γχ → [ŋx], γξ → [ŋks]. Handles both CLTK's
     │    expanded (gks) and unexpanded (gξ) representations of xi.
     │    Longest-match-first ordering prevents partial replacements.
+    │    De-nasalizes gamma before non-velar consonants where CLTK
+    │    over-nasalizes: γν → [gn], γμ → [gm], γλ → [gl]. The de-
+    │    nasalization pass runs AFTER velar rules to avoid undoing
+    │    legitimate nasal assimilation.
     │
     │  ● IPA Normalization: Replaces German uvular /ʁ/ and English
     │    approximant /ɹ/ with the alveolar trill /r/ appropriate to
@@ -102,14 +111,17 @@ P I P E L I N E
     │    does not already begin with an aspirate, preventing double-
     │    aspiration artifacts. Rho with rough breathing (ῥ) is
     │    detected by walking NFD combining marks after ρ and produces
-    │    [r̥] (voiceless alveolar trill via combining ring below,
-    │    U+0325), rather than being silently dropped.
+    │    either [r̥] (voiceless alveolar trill via combining ring
+    │    below, U+0325) or the fallback [hr] (aspiration before
+    │    trill), controlled by the voiceless_rho_combining config
+    │    flag. The fallback is preferred for the German Chirp3 voice
+    │    which may not support combining diacritics on consonants.
     │
     │  ● Accent Stripping: All pitch information is removed from the
-    │    IPA (stress marks, combining accents) so the TTS engine
-    │    produces a tonally flat base. Pitch is then reintroduced
-    │    exclusively through SSML <prosody contour>, giving us full
-    │    control.
+    │    IPA (stress marks ˈˌ, combining accents U+0300–U+036F) so
+    │    the TTS engine produces a tonally flat base. Pitch is then
+    │    reintroduced exclusively through SSML <prosody contour>,
+    │    giving us full control.
     │
     ▼
 [4] ACCENT MAPPING — Greek-to-IPA Alignment
@@ -121,20 +133,36 @@ P I P E L I N E
     │
     │  Shared Scanner (scan_greek_vowel_units): Greek vowel units are
     │  identified, with recognized diphthongs (αι, ει, οι, αυ, ευ, ου,
-    │  ηυ, υι) collapsed into single vocalic units. Diaeresis (trema)
-    │  is respected as a diphthong breaker. Each unit carries metadata:
-    │  base character index, diphthong status, inherent length (η/ω).
-    │  This scanner is shared by accent mapping, quantity enforcement,
-    │  and IPA grouping — one definition of "what is a vowel unit" used
-    │  everywhere.
+    │  ηυ, υι) collapsed into single vocalic units. Diaeresis (trema,
+    │  U+0308) on the second element breaks the diphthong. Each unit
+    │  carries metadata: base character index, diphthong status,
+    │  inherent length (η/ω, circumflex, or macron).
+    │
+    │  Iota subscript (U+0345, combining ypogegrammeni) is absorbed
+    │  into the preceding vowel unit. In NFD, ᾳ decomposes to α +
+    │  U+0345. This is NOT a separate vowel — it is a historical long
+    │  diphthong element. The unit is marked as a diphthong so the
+    │  unit count matches CLTK output (which renders the subscript
+    │  as a semivowel [j]). No phantom vowel unit is created. The
+    │  is_long flag comes from the base vowel and accent, not from
+    │  the subscript itself.
+    │
+    │  For diphthongs, BOTH the first and second element's base
+    │  indices map to the same vowel unit, because accent combining
+    │  marks may attach to either element (e.g., οῦ has perispomeni
+    │  on υ, not ο).
     │
     │  Shared Scanner (scan_ipa_vowel_units): IPA vowel units are
     │  identified using an explicit whitelist of IPA diphthong pairs
-    │  that CLTK actually produces (ai, ei, oi, au, eu, ou, yi, ɛi,
-    │  ɔi). Only whitelisted pairs are merged; all other adjacent
-    │  vowels are treated as hiatus. Length markers (ː) are consumed
-    │  into the preceding unit. This prevents the greedy merging of
-    │  any adjacent IPA vowels that broke alignment in hiatus contexts.
+    │  that CLTK actually produces. The whitelist covers both vowel +
+    │  vowel pairs (ai, ei, oi, au, eu, ou, yi, ɛi, ɔi) and vowel +
+    │  semivowel pairs (ɑj, ej, oj, ɛj, ɔj, aj, ij, ɑw, ew, ow,
+    │  ɛw, ɔw, aw) that the Probert reconstruction generates. Only
+    │  whitelisted pairs are merged; all other adjacent vowels are
+    │  treated as hiatus. Length markers (ː) are consumed into the
+    │  preceding unit. This prevents the greedy merging of any
+    │  adjacent IPA vowels that would break alignment in hiatus
+    │  contexts (e.g., θέατρον → tʰeɑtron where εα is two units).
     │
     │  Alignment: The n-th Greek vowel unit maps to the n-th IPA vowel
     │  unit. Because both scanners use the same diphthong-aware logic,
@@ -160,6 +188,10 @@ P I P E L I N E
     │  ● Circumflex: Rise-fall (+35% → −12%) with the fall bounded
     │                 by the accented syllable's proportional duration,
     │                 preventing smear across polysyllabic words.
+    │                 Monosyllable circumflexes use a tight rise-fall
+    │                 (peak at 25%, fall by 65%) since there is no room
+    │                 to spread. When the computed tail position reaches
+    │                 100%, the redundant final contour point is omitted.
     │  ● Grave:      Suppressed rise (+5%), modeling the pitch
     │                 neutralization of non-final acutes.
     │
@@ -173,31 +205,43 @@ P I P E L I N E
 [6] SSML BATCHER — Prosodic Unit Assembly
     │
     │  Words are not processed in isolation. Proclitics (ὁ, εἰς, οὐκ),
-    │  enclitics (τε, γε, τις), and elided forms (ἀλλ᾽, δ᾽) are merged
-    │  into prosodic groups before SSML generation. Each word in the
-    │  group is transcribed individually by CLTK, then the IPA strings
-    │  are concatenated and wrapped in a single <phoneme> tag.
+    │  enclitics (τε, γε, τις), and elided forms (ἀλλ᾽, δ᾽, καθ᾿)
+    │  are merged into prosodic groups before SSML generation. Elision
+    │  is detected through a unified set of apostrophe-like codepoints
+    │  (ELISION_MARKS) covering koronis U+1FBD, psili U+1FBF, right
+    │  single quote U+2019, ASCII apostrophe U+0027, modifier letter
+    │  apostrophe U+02BC, and left single quote U+2018. Each word in
+    │  the group is transcribed individually by CLTK, then the IPA
+    │  strings are concatenated and wrapped in a single <phoneme> tag.
     │
     │  Accent selection (select_group_accent): The group is walked in
-    │  order — proclitics are skipped, the first non-proclitic word is
-    │  the host, and its accent governs the group's pitch contour.
-    │  Enclitic accents are suppressed. Secondary accents on the host
-    │  ultima (induced by enclitics, e.g., ἄνθρωπός τε) are detected
-    │  from the source text for potential future use.
+    │  order — proclitics are skipped, elided unaccented words (e.g.,
+    │  δ᾽, καθ᾿) are skipped as phonologically dependent fragments,
+    │  and the first remaining accented word is the host whose accent
+    │  governs the group's pitch contour. Enclitic accents are
+    │  suppressed. Secondary accents on the host ultima (induced by
+    │  enclitics, e.g., ἄνθρωπός τε) are detected from the source
+    │  text for potential future use.
     │
     │  Breath pacing: A configurable set of conjunction and preposition
     │  triggers (καί, ἀλλά, ὅτι, etc.) insert natural breath pauses
-    │  when the word count since the last pause exceeds a threshold.
-    │  A hard ceiling forces a pause regardless of trigger presence.
+    │  when the word count since the last pause exceeds a threshold
+    │  (max_breath_words). A hard ceiling (force_breath_words) forces
+    │  a pause regardless of trigger presence.
     │
-    │  The fragment stream is chunked into segments under 5000 bytes
-    │  (configurable) to respect API limits.
+    │  Pause durations are scaled by the inverse of the global speaking
+    │  rate — a rate of 2.0 halves all pauses, 0.5 doubles them —
+    │  keeping rhythm proportional at any speed.
+    │
+    │  The fragment stream is chunked into segments under a configurable
+    │  byte limit (max_chunk_bytes, default 4500) to respect API limits.
     │
     ▼
 [7] AUDIO RENDERER
     │
     │  Sends SSML chunks to Google Cloud TTS with exponential-backoff
-    │  retry on transient errors (503, 429, timeouts).
+    │  retry on transient errors (503, 429, 500, timeouts, resource
+    │  exhaustion).
     │
     │  WAV Construction: Each API response is a complete RIFF/WAVE file.
     │  The renderer dynamically parses RIFF headers to extract the fmt
@@ -208,11 +252,12 @@ P I P E L I N E
     │
     │  Failure Resilience: When a chunk fails after all retries, the
     │  renderer estimates the expected audio duration from the SSML
-    │  content (counting phoneme tags and break durations) and inserts
-    │  a correctly-sized PCM silence placeholder. This preserves
-    │  temporal alignment in the output file rather than allowing
-    │  words to jump forward in time. Failed chunk indices are logged
-    │  in the debug output.
+    │  content — counting syllable nuclei in phoneme tags (at ~220ms
+    │  per syllable for slow formal speech) and summing explicit break
+    │  durations — and inserts a correctly-sized PCM silence placeholder.
+    │  This preserves temporal alignment in the output file rather than
+    │  allowing words to jump forward in time. Failed chunk indices are
+    │  logged in the debug output.
     │
     │  Generates an .m3u playlist for seamless playback of multi-
     │  section output.
@@ -220,12 +265,65 @@ P I P E L I N E
     ▼
 [8] OUTPUT
 
-    Audio files:    {output_dir}/{nn}_{slug}_{voice}_{rate}.wav
+    Audio files:    {output_dir}/{nn}_{slug}_{voice}_{rate}.{ext}
     Debug log:      {debug_file}  (JSON — full SSML, per-word analysis,
                                    accent mapping, downdrift values,
                                    contour strings, failure records)
     IPA cache:      transcription_cache.json
     Playlist:       {output_dir}/playlist.m3u
+
+================================================================================
+A N A L Y S I S   T O O L — analysis.py
+================================================================================
+
+A companion script generates per-section spectral analysis:
+
+    ● 4-panel PNG per section: wideband spectrogram with F0 overlay,
+      intensity contour, clean pitch track with downdrift trend line
+      and accent peak markers, and word-level annotations color-coded
+      by accent type (red = acute, blue = circumflex, gray = grave).
+
+    ● Phonetic report (phonetic_report.txt): global and per-section
+      statistics including F0 mean/range/std, intensity stats, F0-
+      intensity Pearson correlation (low = pitch accent, high = stress
+      leaking), downdrift assessment (mean F0 decline across sentence
+      quarters), accent type distribution, silence region detection
+      (for geminate closure measurement), and anomaly flags (F0 spikes,
+      stress leakage, low voicing).
+
+    ● Raw metrics (metrics.json): all numerical data for downstream
+      processing or comparison across configuration changes.
+
+================================================================================
+K N O W N   L I M I T A T I O N S
+================================================================================
+
+    ● Zeta is rendered as [zd] per Probert/Allen reconstruction. The
+      German voice may simplify this cluster. A config toggle to fall
+      back to [z] is not yet implemented.
+
+    ● Geminate consonants (λλ, ττ, μμ, ππ) appear in the IPA and
+      stop geminates show longer closures spectrally, but sonorant
+      geminates may not be held longer by the voice model. No rate
+      slowdown wrapper for geminate segments exists yet.
+
+    ● Interrogative intonation fails on very short sentences (1-2
+      words) when the final word has accent=none. The updrift baseline
+      only affects words that receive contour tags, so unaccented
+      sentence-final words get no rising terminal.
+
+    ● Enclitic-induced secondary accents on the host ultima (e.g.,
+      the second acute in ἄνθρωπός τε) are detected but not rendered
+      as secondary pitch peaks. The primary accent governs the group
+      contour. Implementing secondary peaks would require multi-peak
+      contour generation per prosodic group.
+
+    ● number_to_greek handles 0–999. Numbers ≥ 1000 are silently
+      dropped.
+
+    ● Cache invalidation hashes the entire config.toml and script.
+      Non-phonological config changes (output_dir, debug_file) will
+      unnecessarily invalidate the cache.
 
 ================================================================================
 C O N F I G U R A T I O N — config.toml
@@ -237,44 +335,56 @@ C O N F I G U R A T I O N — config.toml
 
 [options]
     dry_run                                 Bool. Skip API calls; estimate cost.
-    apply_sandhi                            Bool. Merge elided words.
+    apply_sandhi                            Bool. Merge elided words into
+                                                   prosodic groups.
     apply_rough_breathing                   Bool. Pronounce the dasia as /h/.
+    voiceless_rho_combining                 Bool. Use combining ring below for
+                                                   voiceless rho [r̥] vs fallback
+                                                   [hr]. False recommended for
+                                                   Chirp3 voice.
 
 [prosody]
     contour_peak                            Int.   Acute pitch rise (%).
     contour_grave                           Int.   Grave pitch rise (%).
     contour_end                             Int.   Post-accent pitch drop (%).
-    circumflex_tail_len                     Int.   Circumflex fall duration (legacy;
-                                                   now bounded by syllable proportion).
+    circumflex_tail_len                     Int.   Legacy. Circumflex fall is now
+                                                   bounded by syllable proportion.
     downdrift_start                         Int.   Sentence-initial baseline (%).
     downdrift_end                           Int.   Sentence-final baseline (%).
     updrift_start                           Int.   Interrogative start pitch (%).
     updrift_end                             Int.   Interrogative end pitch (%).
-    heavy_word_rate                         Str.   Speed reduction for heavy words.
+    heavy_word_rate                         Str.   Speed reduction for heavy words
+                                                   (e.g., "-15%"). Scaled by
+                                                   syllable count.
     downdrift_clause_based_rewind_scale     Float. Clause-boundary baseline reset
-                                                   (0.0 = no reset, 1.0 = full).
+                                                   (0.0 = no reset, 1.0 = full
+                                                   rewind to sentence start).
 
 [pauses]
     breath, newline, comma, period, minor   Str.   Duration in ms (e.g., "145ms").
+                                                   Auto-scaled by speaking_rate.
 
 [pacing]
     force_breath_words                      Int.   Hard ceiling before forced pause.
-    max_breath_words                        Int.   Soft target phrase length.
+    max_breath_words                        Int.   Soft target phrase length before
+                                                   breath at next trigger word.
 
 [processing]
-    max_chunk_bytes                         Int.   Max SSML bytes per API call.
+    max_chunk_bytes                         Int.   Max SSML bytes per API call
+                                                   (default 4500, API limit 5000).
     delimiter                               Str.   Section separator in input file.
 
 [tts]
     voice_name                              Str.   Google voice ID.
     speaking_rate                           Float. Global speed multiplier.
-    pitch                                   Float. Global pitch offset.
-    audio_encoding                          Str.   "LINEAR16" or "MP3".
+    pitch                                   Float. Global pitch offset (semitones).
+    audio_encoding                          Str.   "LINEAR16" (WAV) or "MP3".
     output_dir                              Str.   Output directory.
 
 [cltk]
     dialect                                 Str.   CLTK dialect (e.g., "attic").
-    reconstruction                          Str.   CLTK reconstruction (e.g., "probert").
+    reconstruction                          Str.   CLTK reconstruction (e.g.,
+                                                   "probert").
 
 [google_cloud]
     service_account_file                    Str.   Path to GCP credentials JSON.
@@ -289,7 +399,18 @@ D E P E N D E N C I E S
 
     google-cloud-texttospeech
                     Google Cloud TTS client. Requires a service account with
+                    Text-to-Speech API enabled.
+
+    praat-parselmouth (analysis.py only)
+                    Python wrapper around Praat for pitch extraction,
+                    spectrogram generation, and intensity analysis.
+
+    matplotlib, numpy (analysis.py only)
+                    Visualization and numerical computation.
+
+================================================================================
 """
+
 
 import time
 import hashlib
