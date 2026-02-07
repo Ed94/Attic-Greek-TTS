@@ -1,7 +1,7 @@
 """
 ================================================================================
 A N C I E N T   G R E E K   T T S   G E N E R A T O R
-The "German Trojan Horse" Method
+The "German Trojan Horse" Method (Final Production Version)
 ================================================================================
 
 Google Cloud TTS (and most commercial engines) does not support Ancient Greek.
@@ -26,25 +26,23 @@ ARCHITECTURAL PIPELINE:
 [Raw Text]
     |
     v
-[Normalization]
+[Normalization & Safety]
     - Cleans Critical Sigla (Removes {}, [], <>, †).
     - Expands Numerals ("24" -> "eikosi tessares", "IV" -> "tettares").
-    - Splits stuck alphanumerics ("1a" -> "1 a").
+    - Escapes XML special characters to prevent API crashes.
     |
     v
 [Sentence Analysis] (The "Downdrift" Engine)
-    - Splits text into full sentences.
-    - Calculates a linear pitch baseline that drifts downwards from the
-      start of the sentence (+10%) to the end (-10%) to simulate natural
-      human intonation.
+    - Calculates linear pitch baseline (Start +10% -> End -10%).
+    - Clause Detection: Resets intonation at colons/commas to prevent
+      "growling" at the end of long periodic sentences.
     |
     v
 [Phonology Engine] (Cached)
- - Transcribes to IPA (CLTK / Probert reconstruction).
-    - INJECTS /h/ if Rough Breathing is detected (Tunable).
-    - Analyzes Vowel Quantity (Moraic weight).
-    - Identifies Accent Type (Acute vs. Circumflex vs. Grave).
-    - Fallback: Checks IPA stress (ˈ) or Greek diacritics if CLTK fails.
+    - Transcribes to IPA (CLTK / Probert reconstruction).
+    - IPA Normalization: Enforces Alveolar Trill (/r/) over German Uvular (/ʁ/).
+    - Quantity Enforcement: Forces length markers (ː) on Eta/Omega.
+    - Smart Aspirate: Injects /h/ for Rough Breathing without double-aspiration.
     |
     v
 [Prosody Synthesizer]
@@ -56,23 +54,21 @@ ARCHITECTURAL PIPELINE:
     |
     v
 [SSML Batcher]
-    - Chunks stream into < 5000 byte segments (Google API limit).
-    - Injects <break> tags for breath pauses based on word count.
-    - Applies Sandhi (Elision) logic to glue words (Tunable).
+    - Applies True Sandhi: Merges elided words (ἀλλ᾽ ἐγὼ -> ἀλλ᾽ἐγὼ) into
+      single prosodic units to prevent glottal stops.
+    - Chunks stream into < 5000 byte segments.
     |
     v
 [Audio Renderer]
     - Requests audio chunks from Google Cloud.
-    - Binary Stitching:
-        * WAV: Strips 44-byte RIFF headers from chunks 2..N.
-        * MP3: Direct byte concatenation.
-        * Re-writes File Size in WAV header (Little Endian).
+    - Robust Binary Stitching: Dynamically parses RIFF headers to extract payload.
+    - Generates .m3u Playlist for seamless playback of chunked audio.
 
 TUNABLES (config.toml):
 -----------------------
 [options]
-    apply_sandhi          :: (Bool) Glue words ending in apostrophe (ἀλλ᾽ ἐγὼ -> ἀλλ᾽ἐγὼ)
-    apply_rough_breathing :: (Bool) Pronounce the 'h' (dasia)
+    apply_sandhi          :: (Bool) Merge words ending in apostrophe.
+    apply_rough_breathing :: (Bool) Pronounce the 'h' (dasia).
 
 [prosody]
     contour_peak    :: (Int) Pitch rise for Acute accent (e.g., 35).
@@ -95,12 +91,14 @@ data loss during long batch operations.
 ================================================================================
 """
 
+
 import os
 import re
 import json
 import struct
 import tomli
 import unicodedata
+from   xml.sax.saxutils import escape
 from   cltk.phonology.grc.transcription import Transcriber
 from   google.cloud                     import texttospeech
 
@@ -289,6 +287,10 @@ def analyze_word_data(word):
 
         # --- VOWEL LENGTH ENFORCEMENT ---
         # If Greek has Eta (η) or Omega (ω), force IPA length (ː).
+        # 1. Force Alveolar Trill: Replace uvular 'ʁ' or approximant 'ɹ' with 'r'
+        clean_ipa = clean_ipa.replace('ʁ', 'r').replace('ɹ', 'r')
+        
+        # 2. Vowel Length Enforcement (German Rhythm)
         if 'η' in word or 'ω' in word or '\u0342' in norm_greek:
             if 'ː' not in clean_ipa:
                 replacements = {'ɛ': 'ɛː', 'ɔ': 'ɔː', 'e': 'eː', 'o': 'oː'}
@@ -297,7 +299,7 @@ def analyze_word_data(word):
                     temp_ipa.append(replacements.get(char, char))
                 clean_ipa = "".join(temp_ipa)
 
-        # --- ROUGH BREATHING (TUNABLE) ---
+        # --- ROUGH BREATHING ---
         apply_rough = config.get("options", {}).get("apply_rough_breathing", True)
         
         if apply_rough and '\u0314' in norm_greek:
@@ -509,7 +511,7 @@ def build_ssml_fragments(full_text):
                         i   += 1 # Skip next word iteration
                 
                 if not has_greek_chars(word): 
-                    if word.strip(): fragments.append(word)
+                    if word.strip(): fragments.append(escape(word))
                     i += 1
                     continue
 
@@ -536,7 +538,9 @@ def build_ssml_fragments(full_text):
                     ipa               = w_data["ipa"]
                     contour, dur_rate = calculate_prosody(w_data, baseline_shift=current_baseline)
                     
-                    ph_tag     = f'<phoneme alphabet="ipa" ph="{ ipa }">{ dummy_text }</phoneme>'
+                    # SSML Safety (Escape XML chars)
+                    safe_text  = escape(dummy_text)
+                    ph_tag     = f'<phoneme alphabet="ipa" ph="{ ipa }">{ safe_text }</phoneme>'
                     final_ssml = ph_tag
                     
                     if dur_rate != "0%":
@@ -553,7 +557,7 @@ def build_ssml_fragments(full_text):
                         "contour":   contour
                     })
                 else:
-                    fragments.append(dummy_text)
+                    fragments.append(escape(dummy_text))
                 
                 # Append space if we are not at end of chunk (Sandhi merge logic removed as it is handled above)
                 if i < len(words) - 1: 
@@ -652,6 +656,7 @@ def generate_audio():
     )
 
     full_debug_log = []
+    generated_files = [] # For Playlist
 
     for i, text in enumerate(sections):
         print(f":: Generating Section {i+1}...")
@@ -708,6 +713,7 @@ def generate_audio():
         if final_audio_bytes:
             with open(output_path, "wb") as out: out.write(final_audio_bytes)
             print(f"    -> Saved: {output_path}")
+            generated_files.append(filename)
         else:
             print("    [!] Error: No audio generated.")
 
@@ -715,6 +721,14 @@ def generate_audio():
         
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(TRANSCRIPTION_CACHE, f, ensure_ascii=False, indent=2)
+
+    # Playlist Generation
+    if generated_files:
+        playlist_path = os.path.join(output_dir, "playlist.m3u")
+        with open(playlist_path, "w", encoding="utf-8") as f:
+            for fname in generated_files:
+                f.write(f"{fname}\n")
+        print(f":: Playlist created: {playlist_path}")
 
     with open(CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(TRANSCRIPTION_CACHE, f, ensure_ascii=False, indent=2)
