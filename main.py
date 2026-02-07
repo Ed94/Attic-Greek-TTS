@@ -1,3 +1,42 @@
+"""
+--------------------------------------------------------------------------------
+SCRIPT: Ancient Greek TTS Generator (The "German Trojan Horse" Method)
+
+WHAT THIS DOES:
+    This script generates MP3s of Ancient Greek text using Google Cloud's 
+    Text-to-Speech API. 
+
+THE PROBLEM:
+    Google TTS does not support Ancient Greek. If you feed it Greek script, 
+    it tries to read it like Modern Greek (wrong pitch, wrong vowels) or 
+    just fails entirely depending on the voice model.
+
+THE SOLUTION (THE HACK):
+    1. We use the CLTK library to calculate the IPA (International Phonetic Alphabet)
+       pronunciation of the Ancient Greek words (Attic dialect, Probert reconstruction).
+    2. We select a GERMAN voice model (Chirp 3 HD). German 
+       vowel purity and phoneme support map much better to Ancient Greek than 
+       English models, which tend to diphthongize everything.
+    3. We use SSML (Speech Synthesis Markup Language).
+    4. We wrap every single word in a <phoneme> tag with the calculated IPA.
+    5. CRITICAL STEP: Inside the <phoneme> tag, we cannot put Greek characters. 
+       The German engine will choke or try to switch languages. We must put 
+       "Romanized" dummy text (e.g., 'logos' instead of 'λόγος'). The engine 
+       sees the Latin letters, accepts the input, but overrides the sound 
+       completely with our custom IPA.
+
+FLOW:
+    Config -> Parse Input -> Split by Punctuation -> 
+    (Punctuation becomes <break> tags for rhythm) ->
+    (Words become IPA <phoneme> tags) -> 
+    Send Giant SSML String to Google -> Save MP3.
+
+DEBUGGING:
+    Check 'debug_dump.json' to see exactly what SSML was sent and what IPA 
+    CLTK generated for each word.
+--------------------------------------------------------------------------------
+"""
+
 import os
 import re
 import json
