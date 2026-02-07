@@ -12,6 +12,7 @@ audio_encoding = "LINEAR16"
 output_extension = "mp3"
 speaking_rate = 0.82
 output_dir = "./output"
+pitch = 0.0
 
 [files]
 input_text = "input.txt"
