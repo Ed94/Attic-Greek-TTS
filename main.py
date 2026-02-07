@@ -9,12 +9,12 @@ FEATURES:
     1. IPA Injection: Uses CLTK (Attic/Probert) to generate IPA.
     2. Numeral Translation: Converts Arabic (1, 26) -> Greek (εἷς, εἴκοσι ἕξ).
     3. High-Res Pitch Contouring: Normalizes IPA to detect accent positions 
-       accurately and applies SSML pitch curves defined in config.toml.
+       accurately and applies SSML pitch curves.
     4. Configurable Pacing: Pauses for punctuation are now tunable.
 
 FLOW:
     Text -> Normalize Numerals -> Split Punctuation -> Split Words -> 
-    Generate IPA -> Detect Accent (NFD) -> Apply Contour -> 
+    Generate IPA -> Detect Accent (All Types) -> Apply Contour -> 
     Stitch Bytes -> Save Single MP3.
 --------------------------------------------------------------------------------
 """
@@ -37,8 +37,8 @@ os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = config["google_cloud"]["service_a
 
 # Initialize CLTK
 TRANSCRIBER = Transcriber(
-    dialect       = config["cltk"]["dialect"], 
-    reconstruction= config["cltk"]["reconstruction"]
+    dialect=config["cltk"]["dialect"], 
+    reconstruction=config["cltk"]["reconstruction"]
 )
 
 # --- 3. NUMERAL TRANSLATION LOGIC ---
@@ -59,9 +59,8 @@ GREEK_HUNDREDS = {
     900: "ἐννακόσιοι"
 }
 ROMAN_MAP = {
-    "i":  1,  "ii":  2,  "iii":  3,  "iv": 4, "v": 5, 
-    "vi": 6,  "vii": 7,  "viii": 8,  "ix": 9, "x": 10,
-    "xi": 11, "xii": 12, "xv":   15, "xx": 20
+    "i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10,
+    "xi": 11, "xii": 12, "xv": 15, "xx": 20
 }
 LATIN_LETTERS = {"a": "ἄλφα", "b": "βῆτα", "c": "γάμμα", "d": "δέλτα", "e": "εἶ"}
 
@@ -77,7 +76,7 @@ def number_to_greek(n):
         if n in GREEK_NUM_BASICS: words.append(GREEK_NUM_BASICS[n])
         elif n in GREEK_TENS: words.append(GREEK_TENS[n])
         else:
-            tens  = (n // 10) * 10
+            tens = (n // 10) * 10
             units = n % 10
             if tens == 20: words.append(GREEK_NUM_BASICS[20])
             else: words.append(GREEK_TENS.get(tens, ""))
@@ -89,8 +88,8 @@ def number_to_greek(n):
 def normalize_text_numerals(text):
     def replace_match(match):
         token = match.group(0).lower()
-        if token.isdigit():        return f" {number_to_greek(int(token))} "
-        if token in ROMAN_MAP:     return f" {number_to_greek(ROMAN_MAP[token])} "
+        if token.isdigit(): return f" {number_to_greek(int(token))} "
+        if token in ROMAN_MAP: return f" {number_to_greek(ROMAN_MAP[token])} "
         if token in LATIN_LETTERS: return f" {LATIN_LETTERS[token]} "
         return token
     text = re.sub(r'\b([0-9]+)\b', replace_match, text)
@@ -152,20 +151,29 @@ def calculate_pitch_contour(ipa_word):
     
     # Load settings with defaults
     p_start = config.get("prosody", {}).get("contour_start", "-2%")
-    p_peak  = config.get("prosody", {}).get("contour_peak", "+20%")
-    p_end   = config.get("prosody", {}).get("contour_end", "-10%")
+    p_peak = config.get("prosody", {}).get("contour_peak", "+20%")
+    p_end = config.get("prosody", {}).get("contour_end", "-10%")
     
-    # Accents: Acute(\u0301), Circumflex(\u0342), Vertical Stress(\u02C8)
-    accent_indices = [i for i, char in enumerate(ipa_word) if char in ["\u0301", "\u0342", "\u02C8", "´", "ˆ"]]
+    # ACCENT CHARACTERS
+    # \u0301 (Acute)
+    # \u0342 (Greek Perispomeni - Circumflex)
+    # \u0300 (Grave) - Added this!
+    # \u0302 (Circumflex generic) - Added this!
+    # \u0303 (Tilde) - Added this!
+    # \u02C8 (IPA Stress line)
+    accent_chars = ["\u0301", "\u0342", "\u0300", "\u0302", "\u0303", "\u02C8", "´", "ˆ", "`"]
+    
+    accent_indices = [i for i, char in enumerate(ipa_word) if char in accent_chars]
+    
     if not accent_indices:
         return None # No accent found
 
-    idx       = accent_indices[0]
+    idx = accent_indices[0]
     total_len = len(ipa_word)
     
     # Calculate relative position (0.1 to 0.9)
     pos_ratio = max(0.1, min(0.9, idx / total_len))
-    peak_pct  = int(pos_ratio * 100)
+    peak_pct = int(pos_ratio * 100)
     
     # Dynamic Contour using config values
     return f"(0%,{p_start}) ({peak_pct}%,{p_peak}) (100%,{p_end})"
@@ -175,17 +183,16 @@ def build_ssml_fragments(full_text):
     full_text = full_text.replace("\r\n", "\n")
     
     # Load Pause Settings
-    pauses    = config.get("pauses", {})
-    t_comma   = pauses.get("comma", "165ms")
-    t_period  = pauses.get("period", "450ms")
-    t_minor   = pauses.get("minor", "300ms")
+    pauses = config.get("pauses", {})
+    t_comma = pauses.get("comma", "165ms")
+    t_period = pauses.get("period", "450ms")
+    t_minor = pauses.get("minor", "300ms")
     t_newline = pauses.get("newline", "80ms")
-    t_skip    = pauses.get("skip", "50ms")
     
     # Split by Punctuation
     parts = re.split(r'([,\.·;:\-\n])', full_text)
     
-    fragments     = []
+    fragments = []
     debug_entries = []
     
     for raw_part in parts:
@@ -214,11 +221,12 @@ def build_ssml_fragments(full_text):
             if not has_greek_chars(word):
                 continue
 
-            ipa        = get_ipa_transcription(word)
+            ipa = get_ipa_transcription(word)
             dummy_text = romanize_greek(word)
             
             if ipa and dummy_text:
-                contour     = calculate_pitch_contour(ipa)
+                contour = calculate_pitch_contour(ipa)
+                
                 phoneme_tag = f'<phoneme alphabet="ipa" ph="{ ipa }">{ dummy_text }</phoneme>'
                 
                 if contour:
@@ -235,9 +243,6 @@ def build_ssml_fragments(full_text):
                 debug_entries.append({"type": "word", "greek": word, "ipa": ipa, "contour": contour})
             else:
                 debug_entries.append({ "type": "error", "text": word })
-
-        # Logic check: If we just finished a block of words, and the NEXT part isn't punctuation,
-        # we might want a tiny space. But usually re.split handles this via the delimiters.
 
     return fragments, debug_entries
 
@@ -256,8 +261,8 @@ def fetch_audio_bytes(client, ssml_chunk, voice_params, audio_config):
     synthesis_input = texttospeech.SynthesisInput(ssml=ssml_chunk)
     try:
         response = client.synthesize_speech(
-            request = texttospeech.SynthesizeSpeechRequest(
-                input = synthesis_input, voice=voice_params, audio_config=audio_config
+            request=texttospeech.SynthesizeSpeechRequest(
+                input=synthesis_input, voice=voice_params, audio_config=audio_config
             )
         )
         return response.audio_content
@@ -337,9 +342,9 @@ def generate_audio_directly():
             print(f"    -> Stitched final chunk ({len(chunk_bytes) if chunk_bytes else 0} bytes)")
 
         greek_slug = "".join([c for c in text[:40] if has_greek_chars(c) or c.isspace()])
-        safe_slug  = sanitize_filename(greek_slug)
+        safe_slug = sanitize_filename(greek_slug)
         if not safe_slug: safe_slug = f"section_{i+1}"
-        filename    = f"{i+1:02d}_{safe_slug}_{voice_name}_{str(rate)}.{ext}"
+        filename = f"{i+1:02d}_{safe_slug}_{voice_name}_{str(rate)}.{ext}"
         output_path = os.path.join(output_dir, filename)
 
         if final_audio_bytes:
