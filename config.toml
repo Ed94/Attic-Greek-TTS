@@ -14,7 +14,7 @@ voice_name = "de-DE-Chirp3-HD-Orus"
 # Chirp 3 works best with uncompressed audio (WAV)
 audio_encoding   = "LINEAR16" 
 output_extension = "mp3"
-speaking_rate    = 0.95
+speaking_rate    = 0.875
 output_dir       = "./output"
 pitch            = 0.0
 
@@ -35,8 +35,13 @@ reconstruction = "Probert" # Probert is generally considered very accurate for A
 comma   = "80ms"  # For , and :
 period  = "145ms" # For . and ; and —
 minor   = "215ms" # For · and -
-newline = "80ms"  # For line breaks (poetry verses)
+newline = "180ms"  # For line breaks (poetry verses)
 skip    = "50ms"  # For skipped non-Greek text (headers/numbers)
+
+[pacing]
+# Breath Logic
+max_breath_words   = 9  # Minimum words before looking for a breath spot
+force_breath_words = 20 # Force a breath if no natural spot found by this count
 
 [prosody]
 # Adjust these to change the "singing" quality of the polytonic accent
