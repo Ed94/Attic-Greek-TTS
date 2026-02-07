@@ -1,7 +1,7 @@
 """
 ================================================================================
 A N C I E N T   G R E E K   T T S   G E N E R A T O R
-The "German Trojan Horse" Method (Final Production Version)
+The "German Trojan Horse" Method
 ================================================================================
 
 Google Cloud TTS (and most commercial engines) does not support Ancient Greek.
@@ -298,41 +298,42 @@ def normalize_text_numerals(text):
 
 def romanize_greek(text):
     """ 
-    Transliterates Greek to Latin. 
-    1. Normalizes to NFD.
-    2. Contextualizes Upsilon: 'u' in diphthongs (au, eu, ou), 'y' elsewhere.
-    3. Handles Rough Breathing ('h') injection.
+    Transliterates Greek to Latin, optimized for German TTS pronunciation quirks.
     """
     norm = unicodedata.normalize('NFD', text)
     
-    # IMPROVEMENT: Fix Diphthongs (α,ε,ο,η,ω + optional accents + υ) -> u
-    # This prevents "autos" becoming "aytos" which German TTS reads weirdly.
-    norm = re.sub(r'([αεοηωΑΕΟΗΩ])([\u0300-\u036F]*)([υΥ])', r'\1\2u', norm)
+    # 1. Handle Diphthongs specifically for German Phonology
+    # 'eu' in German is 'oy', so we break it to 'e-u' to force 'eh-oo'
+    norm = re.sub(r'([εΕ])([\u0300-\u036F]*)([υΥ])', r'e\2-u', norm) 
+    # 'au' in German is correct for Greek 'au'
+    norm = re.sub(r'([αΑ])([\u0300-\u036F]*)([υΥ])', r'a\2u', norm)
+    # 'ou' in German is 'u' (long u), which is perfect for Greek 'ou'
+    norm = re.sub(r'([οΟ])([\u0300-\u036F]*)([υΥ])', r'u', norm) # ou -> u
 
     result = []
     mapping = {
         'α': 'a', 'β': 'b', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z', 
-        'η': 'e', 'θ': 'th','ι': 'i', 'κ': 'k', 'λ': 'l', 'μ': 'm', 
+        'η': 'ê', 'θ': 'th','ι': 'i', 'κ': 'k', 'λ': 'l', 'μ': 'm', 
         'ν': 'n', 'ξ': 'x', 'ο': 'o', 'π': 'p', 'ρ': 'r', 'σ': 's', 
         'ς': 's', 'τ': 't', 'υ': 'y', 'φ': 'ph','χ': 'ch','ψ': 'ps', 
-        'ω': 'o'
+        'ω': 'ô'
     }
     
-    # Check Config for Rough Breathing preference
     apply_rough = config.get("options", {}).get("apply_rough_breathing", True)
     
-    # If rough breathing exists, prepend 'h' (unless it's Rho which is special)
+    # Handle Rough Breathing (Dasia)
     if apply_rough and '\u0314' in norm:
         if not text.lower().startswith('ῥ'):
              result.append('h')
 
     for char in norm:
-        # Skip the combining char itself, we handled it
-        if char == '\u0314': continue
+        if char == '\u0314': continue # Skip breathing mark
         
         c = char.lower()
         if   c in mapping:    result.append(mapping[c])
-        elif 'a' <= c <= 'z': result.append(char) # Catches the 'u' from our regex
+        # Allow existing Latin chars (from our regex fixes)
+        elif 'a' <= c <= 'z': result.append(char) 
+        elif char == '-':     result.append(char) # Keep the hyphen we added
         elif char.isspace():  result.append(char)
         
     return "".join(result)
@@ -353,9 +354,9 @@ def analyze_word_data(word):
     """
     Robust Philological Analysis.
     1. Transcribes to IPA.
-    2. INJECTS /h/ if Rough Breathing is detected (Tunable).
-    3. Searches for Greek Pitch Accents.
-    4. Fallbacks for Stress/Quantity.
+    2. Enforces Quantity (Vowel Length) for Eta/Omega.
+    3. Strips IPA pitch accents (so they don't conflict with our SSML contours).
+    4. Detects accent position for the SSML engine.
     """
     # Skip caching for _meta key
     if word == "_meta": return None
@@ -366,68 +367,80 @@ def analyze_word_data(word):
 
     try:
         raw_ipa  = TRANSCRIBER.transcribe(word)
+        # Normalize to break apart combining characters (like accents)
         norm_ipa = unicodedata.normalize('NFD', raw_ipa)
-        # Clean for SSML
-        clean_ipa = norm_ipa.replace("[", "").replace("]", "").replace("/", "")
-        clean_ipa = re.sub(r'[,\.·;:\-—’]', '', clean_ipa)
-        clean_ipa = clean_ipa.replace(" ", "")
-
-        norm_greek  = unicodedata.normalize('NFD', word)
-
-        # Gamma Nasalization (Angelos Rule)
-        clean_ipa = clean_ipa.replace("gg", "ŋg").replace("gk", "ŋk").replace("gχ", "ŋχ").replace("gξ", "ŋξ")
-
-        # IPA Normalization (Trilled R)
-        clean_ipa = clean_ipa.replace('ʁ', 'r').replace('ɹ', 'r')
         
-        # Vowel Length Enforcement
-        if 'η' in word or 'ω' in word or '\u0342' in norm_greek:
-            if 'ː' not in clean_ipa:
-                replacements = {'ɛ': 'ɛː', 'ɔ': 'ɔː', 'e': 'eː', 'o': 'oː'}
-                temp_ipa = []
-                for char in clean_ipa:
-                    temp_ipa.append(replacements.get(char, char))
-                clean_ipa = "".join(temp_ipa)
-
-        # Rough Breathing
-        apply_rough = config.get("options", {}).get("apply_rough_breathing", True)
-        
-        if apply_rough and '\u0314' in norm_greek:
-            if not word.lower().startswith('ῥ'):
-                # Only prepend 'h' if the IPA doesn't already have 'h' or 'ʰ'
-                if not (clean_ipa.startswith('h') or clean_ipa.startswith('ʰ')):
-                    clean_ipa = 'h' + clean_ipa
-
+        # 1. Detect Accent (BEFORE we strip it)
         accent_type = "none"
         accent_idx  = -1
-
-        # 1. Primary Check: Pitch Accents
-        for i, char in enumerate(clean_ipa):
-            if char == "\u0342" or char == "ˆ":
+        
+        # Clean IPA for indexing (remove brackets temporarily)
+        temp_ipa = norm_ipa.replace("[", "").replace("]", "").replace("/", "").replace(" ", "")
+        
+        for i, char in enumerate(temp_ipa):
+            if char in ["\u0342", "ˆ"]: # Circumflex
                 accent_type = "circumflex"
                 accent_idx  = i
                 break
-            elif char == "\u0301" or char == "´":
+            elif char in ["\u0301", "´"]: # Acute
                 accent_type = "acute"
                 accent_idx  = i
                 break
-            elif char == "\u0300" or char == "`":
+            elif char in ["\u0300", "`"]: # Grave
                 accent_type = "grave"
                 accent_idx  = i
                 break
         
-        # 2. Fallback: IPA Stress (ˈ)
+        # 2. Clean IPA for Audio Generation
+        # Remove brackets, slashes, and punctuation
+        clean_ipa = norm_ipa.replace("[", "").replace("]", "").replace("/", "")
+        clean_ipa = re.sub(r'[,\.·;:\-—’]', '', clean_ipa)
+        clean_ipa = clean_ipa.replace(" ", "")
+
+        # 3. STRIP ACCENTS from IPA
+        # We want the TTS engine to be 'flat' so our SSML <prosody> controls the pitch perfectly.
+        # If we leave accents in, the engine fights our SSML.
+        clean_ipa = re.sub(r'[\u0300\u0301\u0342\u030d\u0311]', '', clean_ipa)
+
+        # 4. Gamma Nasalization (Angelos Rule)
+        clean_ipa = clean_ipa.replace("gg", "ŋg").replace("gk", "ŋk").replace("gχ", "ŋχ").replace("gξ", "ŋξ")
+
+        # 5. IPA Normalization (Trilled R)
+        clean_ipa = clean_ipa.replace('ʁ', 'r').replace('ɹ', 'r')
+        
+        # 6. QUANTITY ENFORCEMENT (The Vowel Length Fix)
+        # CLTK Probert usually maps:
+        # Eta (η) -> ɛ (open e)
+        # Omega (ω) -> ɔ (open o)
+        # We ensure these ALWAYS have the length marker (ː)
+        
+        # Regex: Find 'ɛ' or 'ɔ' NOT followed by 'ː', and add 'ː'
+        clean_ipa = re.sub(r'([ɛɔ])(?!ː)', r'\1ː', clean_ipa)
+
+        # 7. Rough Breathing
+        norm_greek  = unicodedata.normalize('NFD', word)
+        apply_rough = config.get("options", {}).get("apply_rough_breathing", True)
+        
+        if apply_rough and '\u0314' in norm_greek:
+            if not word.lower().startswith('ῥ'):
+                # Only prepend 'h' if the IPA doesn't already have 'h'
+                if not (clean_ipa.startswith('h') or clean_ipa.startswith('ʰ')):
+                    clean_ipa = 'h' + clean_ipa
+
+        # Fallback: IPA Stress (ˈ) if no pitch accent found
         if accent_type == "none":
             if 'ˈ' in clean_ipa:
                 accent_type = "acute" 
+                # Recalculate index based on stripped string
                 accent_idx  = clean_ipa.find('ˈ') + 1 
                 clean_ipa   = clean_ipa.replace('ˈ', '')
         
-        # 3. Fallback: Greek Text Circumflex
+        # Fallback: Greek Text Circumflex
         if accent_type == "none":
             if '\u0342' in norm_greek or '͂' in norm_greek:
                 accent_type = "circumflex"
-                match       = re.search(r'[aeiouyηω]', clean_ipa)
+                # Find the vowel to attach it to
+                match = re.search(r'[aeiouyɛɔηω]', clean_ipa)
                 if match: accent_idx = match.start()
 
         long_markers    = clean_ipa.count('ː')
@@ -440,7 +453,7 @@ def analyze_word_data(word):
             "accent_type": accent_type,
             "accent_idx":  accent_idx,
             "is_heavy":    is_heavy,
-            "len":         len(clean_ipa)
+            "len":         len(clean_ipa) # Length of the actual spoken IPA
         }
         TRANSCRIPTION_CACHE[word] = data
         return data
@@ -456,6 +469,7 @@ def calculate_prosody(word_data, baseline_shift=0):
     idx    = word_data["accent_idx"]
     total  = word_data["len"]
     
+    # Load config
     c_peak  = config["prosody"].get("contour_peak",  35)
     c_grave = config["prosody"].get("contour_grave", 5)
     c_end   = config["prosody"].get("contour_end",   -12)
@@ -468,6 +482,7 @@ def calculate_prosody(word_data, baseline_shift=0):
     
     def p(val): return f"{int(val):+d}%"
 
+    # --- 1. Contour Calculation (Same as before) ---
     contour = None
     if idx >= 0 and total > 0:
         pos_ratio = max(0.1, min(0.9, idx / total))
@@ -481,9 +496,25 @@ def calculate_prosody(word_data, baseline_shift=0):
         else: 
             contour = f"(0%,{p(val_start)}) ({peak_pct}%,{p(val_peak)}) (100%,{p(val_end)})"
 
+    # --- 2. Improved "Heavy Word" Smoothing ---
     rate = "0%"
     if word_data["is_heavy"]:
-        rate = config["prosody"].get("heavy_word_rate", "-15%")
+        # Count syllables (rough approximation via vowels)
+        vowel_count = len(re.findall(r'[aeiouyɛɔηω]', ipa, re.IGNORECASE))
+        
+        # LOGIC: Only slow down if the word is substantial (3+ syllables)
+        # or if it is extremely dense with long vowels.
+        base_slowdown = int(config["prosody"].get("heavy_word_rate", "-15%").strip('%'))
+        
+        if vowel_count < 2:
+            # Short words (e.g., 'mē') shouldn't drag.
+            rate = "0%" 
+        elif vowel_count == 2:
+            # Mild slowdown for disyllabic words
+            rate = f"{int(base_slowdown / 2)}%" 
+        else:
+            # Full slowdown for long, complex words
+            rate = f"{base_slowdown}%"
 
     return contour, rate
 
@@ -582,8 +613,8 @@ def build_ssml_fragments(full_text):
             
             if part in [',', ':', '.', ';', '—', '·', '-']:
                 t = t_period
-                if   part in [',', ':']: t = t_comma
-                elif part in ['·', '-']: t = t_minor
+                if   part == ',':              t = t_comma
+                elif part in ['·', '-', ':']:  t = t_minor # Colon is distinct/longer
                 fragments.append(f'<break time="{t}"/>')
                 words_since_breath = 0 
                 
@@ -696,29 +727,41 @@ def fix_wav_header(wav_bytes):
 
 def extract_wav_payload(wav_bytes):
     """
-    Parses WAV structure to correctly extract audio data, 
-    independent of header size or extra metadata chunks.
+    Robustly parses RIFF/WAVE structure to find the 'data' chunk.
+    This prevents corruption if Google adds metadata headers.
     """
-    if len(wav_bytes) < 44: return b""
-    try:
-        # Skip RIFF header (12 bytes)
-        pos = 12
-        while pos < len(wav_bytes):
-            # Read Chunk ID (4 bytes)
-            chunk_id = wav_bytes[pos:pos+4]
-            # Read Chunk Size (4 bytes, Little Endian)
-            chunk_size = struct.unpack('<I', wav_bytes[pos+4:pos+8])[0]
-            
-            if chunk_id == b'data':
-                # Return the content of the data chunk
-                return wav_bytes[pos+8 : pos+8+chunk_size]
-            
-            # Move to next chunk
-            pos += 8 + chunk_size
-    except Exception as e:
-        print(f"    -> WAV Parse Warning: {e}")
+    if len(wav_bytes) < 12: return b""
     
-    # Fallback to hard slice if parsing fails
+    # Check RIFF header
+    if wav_bytes[0:4] != b'RIFF': return b""
+    if wav_bytes[8:12] != b'WAVE': return b""
+
+    # Start searching after the 12-byte header
+    pos = 12
+    length = len(wav_bytes)
+
+    while pos + 8 < length:
+        # Read Chunk ID (4 bytes) and Size (4 bytes, little endian)
+        chunk_id = wav_bytes[pos : pos+4]
+        try:
+            chunk_size = struct.unpack('<I', wav_bytes[pos+4 : pos+8])[0]
+        except struct.error:
+            break # Malformed tail
+
+        if chunk_id == b'data':
+            # FOUND IT: Return the audio data inside this chunk
+            return wav_bytes[pos+8 : pos+8+chunk_size]
+        
+        # If not 'data', skip this chunk and look at the next one
+        # (+8 accounts for the ID and Size bytes we just read)
+        pos += 8 + chunk_size
+        
+        # Safety alignment (WAV chunks must be word-aligned)
+        if chunk_size % 2 == 1:
+            pos += 1
+
+    # Fallback: If parsing fails, assume standard header size (44 bytes)
+    # This catches cases where the file might be raw PCM but labelled WAV
     return wav_bytes[44:]
 
 def fetch_audio_bytes(client, ssml_chunk, voice_params, audio_config):
