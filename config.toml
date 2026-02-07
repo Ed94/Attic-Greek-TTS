@@ -12,8 +12,8 @@ service_account_file = "./service-account.json"
 # voice_name = "de-DE-Chirp3-HD-Aoede"
 # voice_name = "de-DE-Chirp3-HD-Autonoe"
 # voice_name = "de-DE-Chirp3-HD-Laomedeia"
-# voice_name = "de-DE-Chirp3-HD-Gacrux"
-voice_name = "de-DE-Chirp3-HD-Enceladus"
+voice_name = "de-DE-Chirp3-HD-Gacrux"
+# voice_name = "de-DE-Chirp3-HD-Enceladus"
 
 # Chirp 3 works best with uncompressed audio (WAV)
 audio_encoding   = "LINEAR16" 
@@ -51,9 +51,9 @@ max_breath_words   = 9  # Minimum words before looking for a breath spot
 force_breath_words = 20 # Force a breath if no natural spot found by this count
 
 [prosody]
-# Start Neutral/High so the first syllable isn't swallowed
-contour_start = "+0%" 
-# Go higher for the acute accent (The "Singing" peak)
-contour_peak = "+35%"
-# Drop lower at the end for closure
-contour_end = "-12%"
+contour_start       = "+0%"  # Start Neutral/High so the first syllable isn't swallowed
+contour_peak        = "+35%" # Go higher for the acute accent (The "Singing" peak)
+contour_grave       = "+5%"  # 
+contour_end         = "-12%" # Drop lower at the end for closure
+circumflex_tail_len = 15     # How long (in %) does the circumflex fall take?
+heavy_word_rate     = "-15%" # Speed slowdown for words with long vowels (e.g. "-15%").
