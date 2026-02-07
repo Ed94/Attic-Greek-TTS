@@ -269,7 +269,6 @@ import re
 import sys
 import json
 import struct
-import argparse
 import unicodedata
 from   xml.sax.saxutils import escape
 from   cltk.phonology.grc.transcription import Transcriber
@@ -351,8 +350,10 @@ if "words" not in TRANSCRIPTION_CACHE:
     TRANSCRIPTION_CACHE["words"] = {}
 
 def save_cache():
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+    tmp = CACHE_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(TRANSCRIPTION_CACHE, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, CACHE_FILE)
 
 # ==============================================================================
 # 2. D A T A   M A P P I N G S
@@ -502,6 +503,10 @@ def romanize_greek(text):
     """
     Transliterates Greek to Latin, optimized for German TTS pronunciation quirks.
 
+    Processes each whitespace-delimited token independently so that
+    rough-breathing 'h' is prepended only to the word that carries the
+    dasia, not to the entire multi-word string.
+
     NOTE ON LOSSY TRANSFORMS:
     The diphthong replacements below are INTENTIONALLY LOSSY. Greek accent
     marks (combining acute, grave, circumflex, breathing marks) that sit
@@ -515,20 +520,6 @@ def romanize_greek(text):
     If you need a scholarly romanization that preserves accent information,
     do NOT use this function — it is purpose-built for the TTS pipeline.
     """
-    norm = unicodedata.normalize('NFD', text)
-
-    # Diphthong handling for German phonology.
-    # Combining marks ([\u0300-\u036F]) between vowels are discarded —
-    # see docstring above for why this is intentional.
-
-    # 'eu' in German is 'oy', so we break it to 'e-u' to force 'eh-oo'
-    norm = re.sub(r'([εΕ])([\u0300-\u036F]*)([υΥ])', r'e-u', norm)
-    # 'au' in German is correct for Greek 'au'
-    norm = re.sub(r'([αΑ])([\u0300-\u036F]*)([υΥ])', r'au', norm)
-    # 'ou' in German is 'u' (long u), which is perfect for Greek 'ou'
-    norm = re.sub(r'([οΟ])([\u0300-\u036F]*)([υΥ])', r'u', norm)
-
-    result = []
     mapping = {
         'α': 'a', 'β': 'b', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z',
         'η': 'ê', 'θ': 'th','ι': 'i', 'κ': 'k', 'λ': 'l', 'μ': 'm',
@@ -536,28 +527,59 @@ def romanize_greek(text):
         'ς': 's', 'τ': 't', 'υ': 'y', 'φ': 'ph','χ': 'ch','ψ': 'ps',
         'ω': 'ô'
     }
-
     apply_rough = config.get("options", {}).get("apply_rough_breathing", True)
 
-    # Handle Rough Breathing (Dasia)
-    if apply_rough and '\u0314' in norm:
-        if not text.lower().startswith('ῥ'):
-             result.append('h')
+    tokens = text.split()
+    romanized_tokens = []
 
-    for char in norm:
-        if char == '\u0314': continue # Skip breathing mark
+    for token in tokens:
+        norm = unicodedata.normalize('NFD', token)
 
-        c = char.lower()
-        if   c in mapping:    result.append(mapping[c])
-        # Allow existing Latin chars (from our regex fixes)
-        elif 'a' <= c <= 'z': result.append(char)
-        elif char == '-':     result.append(char) # Keep the hyphen we added
-        elif char.isspace():  result.append(char)
-        # Silently discard combining marks — they are Greek accents
-        # that have no representation in the romanized output.
-        elif '\u0300' <= char <= '\u036F': continue
+        # Diphthong handling for German phonology.
+        # Combining marks between vowels are discarded — see docstring.
+        norm = re.sub(r'([εΕ])([\u0300-\u036F]*)([υΥ])', r'e-u', norm)
+        norm = re.sub(r'([αΑ])([\u0300-\u036F]*)([υΥ])', r'au', norm)
+        norm = re.sub(r'([οΟ])([\u0300-\u036F]*)([υΥ])', r'u', norm)
 
-    return "".join(result)
+        result = []
+
+        # Per-token rough breathing check
+        if apply_rough and '\u0314' in norm:
+            if not token.lower().startswith('ῥ'):
+                result.append('h')
+
+        for char in norm:
+            if char == '\u0314': continue
+
+            c = char.lower()
+            if   c in mapping:    result.append(mapping[c])
+            elif 'a' <= c <= 'z': result.append(char)
+            elif char == '-':     result.append(char)
+            elif char.isspace():  result.append(char)
+            elif '\u0300' <= char <= '\u036F': continue
+
+        romanized_tokens.append("".join(result))
+
+    return " ".join(romanized_tokens)
+
+def make_phoneme_tag(ipa, display_text):
+    """
+    Builds an SSML <phoneme> tag with properly escaped content.
+
+    The display_text is escaped for XML body context (& < >).
+    The IPA string is escaped for XML attribute context (& < > "),
+    preventing malformed SSML if the IPA ever contains a double
+    quote, ampersand, or angle bracket.
+    """
+    safe_display = escape(display_text)
+    safe_ipa = (
+        ipa
+        .replace("&", "&amp;")
+        .replace('"', "&quot;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+    return f'<phoneme alphabet="ipa" ph="{safe_ipa}">{safe_display}</phoneme>'
 
 def has_greek_chars(text):
     return bool(re.search(r'[\u0370-\u03FF\u1F00-\u1FFF]', text))
@@ -1234,10 +1256,7 @@ def build_ssml_fragments(full_text):
                 dummy_text = romanize_greek(" ".join(group))
                 contour, dur_rate = calculate_prosody(group_word_data, baseline_shift=current_baseline)
 
-                # SSML Safety (Escape XML chars)
-                safe_text  = escape(dummy_text)
-                ph_tag     = f'<phoneme alphabet="ipa" ph="{combined_ipa}">{safe_text}</phoneme>'
-                final_ssml = ph_tag
+                final_ssml = make_phoneme_tag(combined_ipa, dummy_text)
 
                 if dur_rate != "0%":
                     final_ssml = f'<prosody rate="{dur_rate}">{final_ssml}</prosody>'
