@@ -63,7 +63,8 @@ ARCHITECTURAL PIPELINE:
     v
 [Audio Renderer]
     - Requests audio chunks from Google Cloud.
-    - Robust Binary Stitching: Dynamically parses RIFF headers to extract payload.
+    - Robust Binary Stitching: Dynamically parses RIFF headers to extract payload
+      and fmt parameters, building a clean WAV from scratch.
     - Generates .m3u Playlist for seamless playback of chunked audio.
 
 TUNABLES (config.toml):
@@ -110,6 +111,7 @@ TUNABLES (config.toml):
 CACHING:
 --------
 IPA transcription is expensive. We maintain 'transcription_cache.json'.
+The cache stores word entries under a "words" key and metadata under "_meta".
 The cache is updated atomically after every section is processed to prevent
 data loss during long batch operations.
 *Auto-Invalidation*: If config.toml or the script changes, the cache wipes.
@@ -122,6 +124,7 @@ The script will auto-detect missing models and provide download instructions.
 ================================================================================
 """
 
+import time
 import hashlib
 import os
 import re
@@ -156,7 +159,7 @@ if "google_cloud" in config:
 print(":: Initializing CLTK Transcriber (Attic/Probert)...")
 try:
     TRANSCRIBER = Transcriber(
-        dialect        = config["cltk"]["dialect"], 
+        dialect        = config["cltk"]["dialect"],
         reconstruction = config["cltk"]["reconstruction"]
     )
 except Exception as e:
@@ -172,7 +175,7 @@ def get_file_hash(filepath):
         return hashlib.md5(f.read()).hexdigest()
 
 CACHE_FILE = "transcription_cache.json"
-TRANSCRIPTION_CACHE = {}
+TRANSCRIPTION_CACHE = {"_meta": {}, "words": {}}
 
 # Calculate current state
 current_config_hash = get_file_hash("config.toml")
@@ -182,36 +185,44 @@ if os.path.exists(CACHE_FILE):
     try:
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             loaded_cache = json.load(f)
-        
-        # Check integrity via _meta field
+
         meta = loaded_cache.get("_meta", {})
-        if (meta.get("config_hash") == current_config_hash and 
+        if (meta.get("config_hash") == current_config_hash and
             meta.get("script_hash") == current_script_hash):
-            
+
             TRANSCRIPTION_CACHE = loaded_cache
-            # Subtract 1 for _meta entry
-            count = max(0, len(TRANSCRIPTION_CACHE) - 1)
+            # Ensure structure exists even if loaded from older format
+            if "words" not in TRANSCRIPTION_CACHE:
+                TRANSCRIPTION_CACHE = {"_meta": meta, "words": {}}
+            count = len(TRANSCRIPTION_CACHE.get("words", {}))
             print(f":: Cache Hit: Loaded {count} lexical entries.")
         else:
             print(":: Change detected in config or script. Invalidating cache.")
-            TRANSCRIPTION_CACHE = {}
-            
+            TRANSCRIPTION_CACHE = {"_meta": {}, "words": {}}
+
     except Exception as e:
         print(f":: Cache Corrupted ({e}). Starting with empty lexicon.")
+        TRANSCRIPTION_CACHE = {"_meta": {}, "words": {}}
 
 # Initialize/Update metadata for the next save
 TRANSCRIPTION_CACHE["_meta"] = {
     "config_hash": current_config_hash,
     "script_hash": current_script_hash
 }
+if "words" not in TRANSCRIPTION_CACHE:
+    TRANSCRIPTION_CACHE["words"] = {}
+
+def save_cache():
+    with open(CACHE_FILE, "w", encoding="utf-8") as f:
+        json.dump(TRANSCRIPTION_CACHE, f, ensure_ascii=False, indent=2)
 
 # ==============================================================================
 # 2. D A T A   M A P P I N G S
 # ==============================================================================
 
 BREATH_TRIGGERS = {
-    "καὶ", "ἀλλὰ", "ἢ", "ὅτι", "ἵνα", "ὡς", "ὥστε", "ἐπεὶ", "ἐπειδὴ",  
-    "εἰς", "πρὸς", "ἐν", "ἐπὶ", "περὶ", "παρὰ", "μετὰ", "διὰ", "ὑπὲρ", 
+    "καὶ", "ἀλλὰ", "ἢ", "ὅτι", "ἵνα", "ὡς", "ὥστε", "ἐπεὶ", "ἐπειδὴ",
+    "εἰς", "πρὸς", "ἐν", "ἐπὶ", "περὶ", "παρὰ", "μετὰ", "διὰ", "ὑπὲρ",
     "ἀπὸ", "ἐκ", "ἐξ", "κατὰ", "ὑπὸ", "ὃς", "ἣ", "ὃ", "οἷος", "ὅσος", "γὰρ", "δέ"
 }
 
@@ -224,28 +235,32 @@ ENCLITICS = {
 
 GREEK_NUM_BASICS = {
     0: "μηδέν",   1: "εἷς",    2: "δύο",     3: "τρεῖς",    4: "τέτταρες",
-    5: "πέντε",   6: "ἕξ",     7: "ἑπτά",    8: "ὀκτώ",     9: "ἐννέα", 
+    5: "πέντε",   6: "ἕξ",     7: "ἑπτά",    8: "ὀκτώ",     9: "ἐννέα",
     10: "δέκα",   11: "ἕνδεκα", 12: "δώδεκα", 13: "τρεῖς καὶ δέκα",
-    14: "τέτταρες καὶ δέκα", 15: "πεντεκαίδεκα", 16: "ἑκκαίδεκα", 
+    14: "τέτταρες καὶ δέκα", 15: "πεντεκαίδεκα", 16: "ἑκκαίδεκα",
     17: "ἑπτακαίδεκα", 18: "ὀκτωκαίδεκα", 19: "ἐννεακαίδεκα", 20: "εἴκοσι"
 }
 GREEK_TENS = {
-    30: "τριάκοντα",  40: "τεσσαράκοντα", 50: "πεντήκοντα", 60: "ἑξήκοντα", 
+    30: "τριάκοντα",  40: "τεσσαράκοντα", 50: "πεντήκοντα", 60: "ἑξήκοντα",
     70: "ἑβδομήκοντα",80: "ὀγδοήκοντα",   90: "ἐνενήκοντα"
 }
 GREEK_HUNDREDS = {
-    100: "ἑκατόν",      200: "διακόσιοι",   300: "τριακόσιοι", 
-    400: "τετρακόσιοι", 500: "πεντακόσιοι", 600: "ἑξακόσιοι", 
+    100: "ἑκατόν",      200: "διακόσιοι",   300: "τριακόσιοι",
+    400: "τετρακόσιοι", 500: "πεντακόσιοι", 600: "ἑξακόσιοι",
     700: "ἑπτακόσιοι",  800: "ὀκτακόσιοι",  900: "ἐννακόσιοι"
 }
 ROMAN_MAP = {
-    "i": 1,   "ii": 2,   "iii": 3,  "iv": 4,   "v": 5, 
+    "i": 1,   "ii": 2,   "iii": 3,  "iv": 4,   "v": 5,
     "vi": 6,  "vii": 7,  "viii": 8, "ix": 9,   "x": 10,
     "xi": 11, "xii": 12, "xv": 15,  "xx": 20
 }
 LATIN_LETTERS = {
     "a": "ἄλφα", "b": "βῆτα", "c": "γάμμα", "d": "δέλτα", "e": "εἶ"
 }
+
+# IPA vowel characters used for accent detection and syllable counting.
+# This covers both ASCII-range IPA and the open-mid vowels CLTK produces.
+IPA_VOWELS = set("aeiouyɛɔæøəɪʊʏ")
 
 # ==============================================================================
 # 3. T E X T   N O R M A L I Z A T I O N
@@ -266,9 +281,9 @@ def number_to_greek(n):
         n %= 100
         if n == 0: return " ".join(words)
     if n >= 20:
-        if n in GREEK_NUM_BASICS: 
+        if n in GREEK_NUM_BASICS:
             words.append(GREEK_NUM_BASICS[n])
-        elif n in GREEK_TENS: 
+        elif n in GREEK_TENS:
             words.append(GREEK_TENS[n])
         else:
             tens  = (n // 10) * 10
@@ -291,36 +306,61 @@ def normalize_text_numerals(text):
         if token in LATIN_LETTERS: return f" {LATIN_LETTERS[token]} "
         return token
 
-    text = re.sub(r'\b([0-9]+)\b',             replace_match, text)
-    text = re.sub(r'\b([ivxIVX]+)\b',          replace_match, text)
-    text = re.sub(r'(?<=\d)[a-z]\b|\b[a-z]\b', replace_match, text)
+    text = re.sub(r'\b([0-9]+)\b', replace_match, text)
+
+    # Only match Roman numerals that are purely Roman numeral characters
+    # and are surrounded by non-Greek context to avoid false positives.
+    def replace_roman(match):
+        token = match.group(0).lower()
+        if token in ROMAN_MAP:
+            return f" {number_to_greek(ROMAN_MAP[token])} "
+        return match.group(0)
+
+    # Only attempt Roman numeral replacement on tokens that are entirely
+    # composed of Roman numeral characters and bounded by whitespace or
+    # punctuation (not adjacent to Greek).
+    text = re.sub(r'(?<![α-ωά-ώἀ-ῷa-zA-Z])\b([ivxIVX]{1,4})\b(?![α-ωά-ώἀ-ῷa-zA-Z])',
+                  replace_roman, text)
+
+    def replace_latin_letter(match):
+        token = match.group(0).lower()
+        if token in LATIN_LETTERS:
+            return f" {LATIN_LETTERS[token]} "
+        return match.group(0)
+
+    text = re.sub(r'(?<=\d)[a-z]\b|\b(?<![α-ωά-ώἀ-ῷ])[a-z]\b(?![α-ωά-ώἀ-ῷ])',
+                  replace_latin_letter, text)
     return text
 
 def romanize_greek(text):
-    """ 
+    """
     Transliterates Greek to Latin, optimized for German TTS pronunciation quirks.
+    Combining marks from the NFD decomposition are discarded in diphthong
+    replacements so they don't leak into the romanized output.
     """
     norm = unicodedata.normalize('NFD', text)
-    
+
     # 1. Handle Diphthongs specifically for German Phonology
+    # Discard any combining marks between the two vowels — they belong
+    # to the Greek accent system and are meaningless in romanized text.
     # 'eu' in German is 'oy', so we break it to 'e-u' to force 'eh-oo'
-    norm = re.sub(r'([εΕ])([\u0300-\u036F]*)([υΥ])', r'e\2-u', norm) 
+    norm = re.sub(r'([εΕ])([\u0300-\u036F]*)([υΥ])', r'e-u', norm)
     # 'au' in German is correct for Greek 'au'
-    norm = re.sub(r'([αΑ])([\u0300-\u036F]*)([υΥ])', r'a\2u', norm)
+    norm = re.sub(r'([αΑ])([\u0300-\u036F]*)([υΥ])', r'au', norm)
     # 'ou' in German is 'u' (long u), which is perfect for Greek 'ou'
-    norm = re.sub(r'([οΟ])([\u0300-\u036F]*)([υΥ])', r'u', norm) # ou -> u
+    norm = re.sub(r'([οΟ])([\u0300-\u036F]*)([υΥ])', r'u', norm)
 
     result = []
     mapping = {
-        'α': 'a', 'β': 'b', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z', 
-        'η': 'ê', 'θ': 'th','ι': 'i', 'κ': 'k', 'λ': 'l', 'μ': 'm', 
-        'ν': 'n', 'ξ': 'x', 'ο': 'o', 'π': 'p', 'ρ': 'r', 'σ': 's', 
-        'ς': 's', 'τ': 't', 'υ': 'y', 'φ': 'ph','χ': 'ch','ψ': 'ps', 
+        'α': 'a', 'β': 'b', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z',
+        'η': 'ê', 'θ': 'th','ι': 'i', 'κ': 'k', 'λ': 'l', 'μ': 'm',
+        'ν': 'n', 'ξ': 'x', 'ο': 'o', 'π': 'p', 'ρ': 'r', 'σ': 's',
+        'ς': 's', 'τ': 't', 'υ': 'y', 'φ': 'ph','χ': 'ch','ψ': 'ps',
         'ω': 'ô'
     }
-    
+
     apply_rough = config.get("options", {}).get("apply_rough_breathing", True)
-    
+
     # Handle Rough Breathing (Dasia)
     if apply_rough and '\u0314' in norm:
         if not text.lower().startswith('ῥ'):
@@ -328,119 +368,209 @@ def romanize_greek(text):
 
     for char in norm:
         if char == '\u0314': continue # Skip breathing mark
-        
+
         c = char.lower()
         if   c in mapping:    result.append(mapping[c])
         # Allow existing Latin chars (from our regex fixes)
-        elif 'a' <= c <= 'z': result.append(char) 
+        elif 'a' <= c <= 'z': result.append(char)
         elif char == '-':     result.append(char) # Keep the hyphen we added
         elif char.isspace():  result.append(char)
-        
+        # Silently discard combining marks — they are Greek accents
+        # that have no representation in the romanized output.
+        elif '\u0300' <= char <= '\u036F': continue
+
     return "".join(result)
 
 def has_greek_chars(text):
     return bool(re.search(r'[\u0370-\u03FF\u1F00-\u1FFF]', text))
 
 def sanitize_filename(text):
-    text = re.sub(r'[\s\n\r]+', '_', text)
-    text = re.sub(r'[^\w\-\u0370-\u03FF\u1F00-\u1FFF]', '', text)
-    return text[:50].strip('_')
+    """
+    Creates a filesystem-safe slug from Greek text.
+    Only ASCII alphanumerics, hyphens, and underscores are kept.
+    """
+    # Transliterate Greek to Latin for the filename
+    romanized = romanize_greek(text)
+    romanized = re.sub(r'[\s\n\r]+', '_', romanized)
+    romanized = re.sub(r'[^a-zA-Z0-9_\-]', '', romanized)
+    return romanized[:50].strip('_')
 
 # ==============================================================================
 # 4. P H O N O L O G Y   &   P R O S O D Y
 # ==============================================================================
 
+def find_accent_in_greek(word):
+    """
+    Finds the accent type and the index of the accented vowel in the
+    NFD-decomposed Greek word. Returns (accent_type, vowel_index) where
+    vowel_index is the position of the base vowel character that carries
+    the accent, counting only base (non-combining) characters.
+
+    This is done on the Greek source text, not on IPA, so it is immune
+    to IPA transformations.
+    """
+    norm = unicodedata.normalize('NFD', word)
+
+    accent_type = "none"
+    # Track which base-character index we are at
+    base_idx = -1
+    found_vowel_idx = -1
+
+    greek_vowels = set("αεηιουωΑΕΗΙΟΥΩ")
+
+    i = 0
+    while i < len(norm):
+        char = norm[i]
+
+        if '\u0300' <= char <= '\u036F':
+            # This is a combining mark — check what kind
+            if char == '\u0342':  # Combining Greek Perispomeni (Circumflex)
+                accent_type = "circumflex"
+                found_vowel_idx = base_idx
+            elif char == '\u0301':  # Combining Acute
+                accent_type = "acute"
+                found_vowel_idx = base_idx
+            elif char == '\u0300':  # Combining Grave
+                accent_type = "grave"
+                found_vowel_idx = base_idx
+            i += 1
+            continue
+
+        # This is a base character
+        base_idx += 1
+
+        # If we already found an accent, stop looking
+        if accent_type != "none":
+            # We found the accent on the previous base char, break
+            # Actually we found it when we saw the combining mark,
+            # and found_vowel_idx is already set. Keep scanning in
+            # case a later accent overrides (shouldn't happen in
+            # well-formed Greek, but be safe).
+            pass
+
+        i += 1
+
+    return accent_type, found_vowel_idx
+
+def map_greek_vowel_index_to_ipa(word, greek_vowel_idx, ipa_string):
+    """
+    Given the index of the accented vowel in the Greek word (counting
+    only base characters), find the corresponding vowel position in
+    the IPA string.
+
+    Strategy: Walk through the Greek base characters and the IPA string
+    in parallel, matching vowels. The n-th Greek vowel maps to the n-th
+    IPA vowel.
+    """
+    norm = unicodedata.normalize('NFD', word)
+    greek_vowels = set("αεηιουωΑΕΗΙΟΥΩ")
+
+    # Count which vowel number the accented character is
+    vowel_number = -1
+    base_idx = -1
+    for char in norm:
+        if '\u0300' <= char <= '\u036F':
+            continue
+        base_idx += 1
+        if char.lower() in greek_vowels:
+            vowel_number += 1
+        if base_idx == greek_vowel_idx:
+            break
+
+    if vowel_number < 0:
+        return -1
+
+    # Now find the vowel_number-th vowel in the IPA string
+    current_vowel = -1
+    for i, ch in enumerate(ipa_string):
+        if ch.lower() in IPA_VOWELS:
+            current_vowel += 1
+            if current_vowel == vowel_number:
+                return i
+
+    return -1
+
 def analyze_word_data(word):
     """
     Robust Philological Analysis.
-    1. Transcribes to IPA.
+    1. Transcribes to IPA via CLTK.
     2. Enforces Quantity (Vowel Length) for Eta/Omega.
     3. Strips IPA pitch accents (so they don't conflict with our SSML contours).
-    4. Detects accent position for the SSML engine.
+    4. Detects accent position from the Greek source text and maps it
+       to the corresponding position in the cleaned IPA.
     """
-    # Skip caching for _meta key
-    if word == "_meta": return None
-    
-    if word in TRANSCRIPTION_CACHE:
-        return TRANSCRIPTION_CACHE[word]
     if not word.strip(): return None
+
+    cache = TRANSCRIPTION_CACHE["words"]
+    if word in cache:
+        return cache[word]
 
     try:
         raw_ipa  = TRANSCRIBER.transcribe(word)
         # Normalize to break apart combining characters (like accents)
         norm_ipa = unicodedata.normalize('NFD', raw_ipa)
-        
-        # 1. Detect Accent (BEFORE we strip it)
-        accent_type = "none"
-        accent_idx  = -1
-        
-        # Clean IPA for indexing (remove brackets temporarily)
-        temp_ipa = norm_ipa.replace("[", "").replace("]", "").replace("/", "").replace(" ", "")
-        
-        for i, char in enumerate(temp_ipa):
-            if char in ["\u0342", "ˆ"]: # Circumflex
-                accent_type = "circumflex"
-                accent_idx  = i
-                break
-            elif char in ["\u0301", "´"]: # Acute
-                accent_type = "acute"
-                accent_idx  = i
-                break
-            elif char in ["\u0300", "`"]: # Grave
-                accent_type = "grave"
-                accent_idx  = i
-                break
-        
+
+        # 1. Detect Accent from GREEK SOURCE (not IPA)
+        accent_type, greek_vowel_idx = find_accent_in_greek(word)
+
         # 2. Clean IPA for Audio Generation
         # Remove brackets, slashes, and punctuation
         clean_ipa = norm_ipa.replace("[", "").replace("]", "").replace("/", "")
-        clean_ipa = re.sub(r'[,\.·;:\-—’]', '', clean_ipa)
+        clean_ipa = re.sub(r'[,\.·;:\-—\']', '', clean_ipa)
         clean_ipa = clean_ipa.replace(" ", "")
 
         # 3. STRIP ACCENTS from IPA
-        # We want the TTS engine to be 'flat' so our SSML <prosody> controls the pitch perfectly.
-        # If we leave accents in, the engine fights our SSML.
+        # We want the TTS engine to be 'flat' so our SSML <prosody> controls
+        # the pitch perfectly. If we leave accents in, the engine fights our SSML.
         clean_ipa = re.sub(r'[\u0300\u0301\u0342\u030d\u0311]', '', clean_ipa)
 
+        # Remove IPA stress marks (we control stress via SSML)
+        clean_ipa = clean_ipa.replace('ˈ', '').replace('ˌ', '')
+
+        # Re-compose after stripping
+        clean_ipa = unicodedata.normalize('NFC', clean_ipa)
+
         # 4. Gamma Nasalization (Angelos Rule)
-        clean_ipa = clean_ipa.replace("gg", "ŋg").replace("gk", "ŋk").replace("gχ", "ŋχ").replace("gξ", "ŋξ")
+        # Handle both ASCII 'g' and IPA 'ɡ' (U+0261)
+        for g_char in ['g', 'ɡ']:
+            clean_ipa = clean_ipa.replace(f'{g_char}{g_char}', f'ŋ{g_char}')
+            clean_ipa = clean_ipa.replace(f'{g_char}k', f'ŋk')
+            clean_ipa = clean_ipa.replace(f'{g_char}χ', f'ŋχ')
+            clean_ipa = clean_ipa.replace(f'{g_char}ξ', f'ŋξ')
+            clean_ipa = clean_ipa.replace(f'{g_char}x', f'ŋx')  # IPA voiceless velar
 
         # 5. IPA Normalization (Trilled R)
         clean_ipa = clean_ipa.replace('ʁ', 'r').replace('ɹ', 'r')
-        
+
         # 6. QUANTITY ENFORCEMENT (The Vowel Length Fix)
-        # CLTK Probert usually maps:
-        # Eta (η) -> ɛ (open e)
-        # Omega (ω) -> ɔ (open o)
-        # We ensure these ALWAYS have the length marker (ː)
-        
-        # Regex: Find 'ɛ' or 'ɔ' NOT followed by 'ː', and add 'ː'
+        # CLTK Probert maps: Eta (η) -> ɛ, Omega (ω) -> ɔ
+        # We ensure these ALWAYS have the length marker (ː).
+        # Only apply to ɛ and ɔ since those are the CLTK symbols for
+        # the inherently long vowels. Plain 'e' and 'o' (from epsilon/omicron)
+        # are left short.
         clean_ipa = re.sub(r'([ɛɔ])(?!ː)', r'\1ː', clean_ipa)
 
         # 7. Rough Breathing
         norm_greek  = unicodedata.normalize('NFD', word)
         apply_rough = config.get("options", {}).get("apply_rough_breathing", True)
-        
+
         if apply_rough and '\u0314' in norm_greek:
             if not word.lower().startswith('ῥ'):
                 # Only prepend 'h' if the IPA doesn't already have 'h'
                 if not (clean_ipa.startswith('h') or clean_ipa.startswith('ʰ')):
                     clean_ipa = 'h' + clean_ipa
 
-        # Fallback: IPA Stress (ˈ) if no pitch accent found
+        # 8. Map accent position from Greek to IPA
+        accent_idx = -1
+        if accent_type != "none" and greek_vowel_idx >= 0:
+            accent_idx = map_greek_vowel_index_to_ipa(word, greek_vowel_idx, clean_ipa)
+
+        # Fallback: Greek Text Circumflex (if find_accent_in_greek missed it)
         if accent_type == "none":
-            if 'ˈ' in clean_ipa:
-                accent_type = "acute" 
-                # Recalculate index based on stripped string
-                accent_idx  = clean_ipa.find('ˈ') + 1 
-                clean_ipa   = clean_ipa.replace('ˈ', '')
-        
-        # Fallback: Greek Text Circumflex
-        if accent_type == "none":
-            if '\u0342' in norm_greek or '͂' in norm_greek:
+            norm_greek_check = unicodedata.normalize('NFD', word)
+            if '\u0342' in norm_greek_check:
                 accent_type = "circumflex"
-                # Find the vowel to attach it to
-                match = re.search(r'[aeiouyɛɔηω]', clean_ipa)
+                match = re.search(r'[' + ''.join(IPA_VOWELS) + r']', clean_ipa)
                 if match: accent_idx = match.start()
 
         long_markers    = clean_ipa.count('ː')
@@ -453,12 +583,13 @@ def analyze_word_data(word):
             "accent_type": accent_type,
             "accent_idx":  accent_idx,
             "is_heavy":    is_heavy,
-            "len":         len(clean_ipa) # Length of the actual spoken IPA
+            "len":         len(clean_ipa)
         }
-        TRANSCRIPTION_CACHE[word] = data
+        cache[word] = data
         return data
 
     except Exception as e:
+        print(f"    [!] IPA Transcription failed for '{word}': {e}")
         return None
 
 def calculate_prosody(word_data, baseline_shift=0):
@@ -468,50 +599,50 @@ def calculate_prosody(word_data, baseline_shift=0):
     a_type = word_data["accent_type"]
     idx    = word_data["accent_idx"]
     total  = word_data["len"]
-    
+
     # Load config
     c_peak  = config["prosody"].get("contour_peak",  35)
     c_grave = config["prosody"].get("contour_grave", 5)
     c_end   = config["prosody"].get("contour_end",   -12)
     c_tail  = config["prosody"].get("circumflex_tail_len", 15)
-    
+
     val_start = baseline_shift
     val_peak  = baseline_shift + c_peak
     val_grave = baseline_shift + c_grave
     val_end   = baseline_shift + c_end
-    
+
     def p(val): return f"{int(val):+d}%"
 
-    # --- 1. Contour Calculation (Same as before) ---
+    # --- 1. Contour Calculation ---
     contour = None
     if idx >= 0 and total > 0:
         pos_ratio = max(0.1, min(0.9, idx / total))
         peak_pct  = int(pos_ratio * 100)
-        
+
         if a_type == "circumflex":
             tail_pct = min(peak_pct + c_tail, 100)
             contour = f"(0%,{p(val_start)}) ({peak_pct}%,{p(val_peak)}) ({tail_pct}%,{p(val_end)}) (100%,{p(val_end)})"
         elif a_type == "grave":
             contour = f"(0%,{p(val_start)}) ({peak_pct}%,{p(val_grave)}) (100%,{p(val_end)})"
-        else: 
+        else:
             contour = f"(0%,{p(val_start)}) ({peak_pct}%,{p(val_peak)}) (100%,{p(val_end)})"
 
-    # --- 2. Improved "Heavy Word" Smoothing ---
+    # --- 2. "Heavy Word" Smoothing ---
     rate = "0%"
     if word_data["is_heavy"]:
         # Count syllables (rough approximation via vowels)
-        vowel_count = len(re.findall(r'[aeiouyɛɔηω]', ipa, re.IGNORECASE))
-        
+        vowel_count = len([ch for ch in ipa if ch.lower() in IPA_VOWELS])
+
         # LOGIC: Only slow down if the word is substantial (3+ syllables)
         # or if it is extremely dense with long vowels.
         base_slowdown = int(config["prosody"].get("heavy_word_rate", "-15%").strip('%'))
-        
+
         if vowel_count < 2:
             # Short words (e.g., 'mē') shouldn't drag.
-            rate = "0%" 
+            rate = "0%"
         elif vowel_count == 2:
             # Mild slowdown for disyllabic words
-            rate = f"{int(base_slowdown / 2)}%" 
+            rate = f"{int(base_slowdown / 2)}%"
         else:
             # Full slowdown for long, complex words
             rate = f"{base_slowdown}%"
@@ -527,30 +658,30 @@ def is_breath_trigger(word):
 # ==============================================================================
 
 def build_ssml_fragments(full_text):
-    
+
     # 1. Cleaning
     full_text = clean_sigla(normalize_text_numerals(full_text))
     full_text = full_text.replace("\r\n", "\n")
-    
+
     # 2. Tokenize Paragraphs
     token_dbl = "||DBL_BRK||"
     full_text = re.sub(r'\n\s*\n+', token_dbl, full_text)
     full_text = full_text.replace("\n", " ")
-    
+
     # 3. Config
     rate_global  = config["tts"].get("speaking_rate", 1.0)
     pauses       = config.get("pauses", {})
     pacing       = config.get("pacing", {})
-    
+
     # --- Tunable Intonation ---
-    drift_start  = config["prosody"].get("downdrift_start", 10)
-    drift_end    = config["prosody"].get("downdrift_end", -10)
+    drift_start   = config["prosody"].get("downdrift_start", 10)
+    drift_end     = config["prosody"].get("downdrift_end", -10)
     updrift_start = config["prosody"].get("updrift_start", -5)
     updrift_end   = config["prosody"].get("updrift_end", 10)
-    
+
     rewind_scale = config["prosody"].get("downdrift_clause_based_rewind_scale", 0.3)
     apply_sandhi = config.get("options", {}).get("apply_sandhi", True)
-    
+
     def scale_time(time_str):
         if not time_str.endswith("ms"): return time_str
         try:
@@ -563,17 +694,17 @@ def build_ssml_fragments(full_text):
     t_comma      = scale_time(pauses.get("comma",   "80ms"))
     t_period     = scale_time(pauses.get("period",  "145ms"))
     t_minor      = scale_time(pauses.get("minor",   "215ms"))
-    
+
     max_breath   = pacing.get("max_breath_words", 9)
     force_breath = pacing.get("force_breath_words", 20)
 
     fragments     = []
     debug_entries = []
-    
+
     # 4. Split Sentences (Preserving Delimiters)
     sentence_pattern = r'([.;]|\|\|DBL_BRK\|\|)'
     raw_sentences    = re.split(sentence_pattern, full_text)
-    
+
     sentences = []
     for i in range(0, len(raw_sentences)-1, 2):
         sentences.append(raw_sentences[i] + raw_sentences[i+1])
@@ -582,133 +713,182 @@ def build_ssml_fragments(full_text):
 
     # 5. Process
     for sentence in sentences:
-        
+
         # Analyze for Downdrift
         clean_words_in_sentence = [w for w in sentence.split() if has_greek_chars(w)]
         total_sentence_words    = len(clean_words_in_sentence)
         current_word_idx        = 0
-        
-        # IMPROVEMENT 1: Interrogative Intonation (Tunable Updrift)
+
+        # Interrogative Intonation (Tunable Updrift)
         current_drift_start = drift_start
         current_drift_end   = drift_end
         if sentence.strip().endswith(';'):
             current_drift_start = updrift_start
             current_drift_end   = updrift_end
 
-        part_pattern = r'([,·:\-]|\.|\|\|DBL_BRK\|\|)' 
+        part_pattern = r'([,·:\-]|\.|\|\|DBL_BRK\|\|)'
         parts        = re.split(part_pattern, sentence)
-        
+
         words_since_breath = 0
-        
+
         for raw_part in parts:
-            
+
             # Handle Paragraph Breaks
             if raw_part == token_dbl:
                 fragments.append(f'<break time="{t_newline}"/>')
                 debug_entries.append({"type": "break", "kind": "newline"})
                 continue
-            
+
             part = raw_part.strip()
             if not part: continue
-            
+
             if part in [',', ':', '.', ';', '—', '·', '-']:
                 t = t_period
                 if   part == ',':              t = t_comma
-                elif part in ['·', '-', ':']:  t = t_minor # Colon is distinct/longer
+                elif part in ['·', '-', ':']:  t = t_minor
                 fragments.append(f'<break time="{t}"/>')
-                words_since_breath = 0 
-                
+                words_since_breath = 0
+
                 # Clause-Based Intonation Reset
                 if total_sentence_words > 0:
                     rewind_amount = int(total_sentence_words * rewind_scale)
                     current_word_idx = max(0, current_word_idx - rewind_amount)
 
                 continue
-            
+
             words = part.split()
-            
-            # Enclitic / Proclitic / Sandhi Merging
+
+            # Enclitic / Proclitic / Sandhi Grouping
+            # Instead of fusing words into a single string (which confuses CLTK),
+            # we group them into prosodic units. Each word is transcribed
+            # individually and the IPA is concatenated.
             i = 0
             while i < len(words):
                 word = words[i]
+
+                # Collect a prosodic group: the head word plus any
+                # proclitics before it, enclitics after it, and elisions.
+                group = [word]
                 merged = True
-                
+
                 while merged and i + 1 < len(words):
                     merged = False
                     next_word = words[i+1]
                     if not has_greek_chars(next_word): break
 
-                    if apply_sandhi and (word.endswith('᾽') or word.endswith('’') or word.endswith("'")):
-                        word += next_word
+                    if apply_sandhi and (word.endswith('᾽') or word.endswith('\u2019') or word.endswith("'")):
                         i += 1
-                        merged = True
-                        continue
-                    
-                    if word.lower() in PROCLITICS:
-                        word += next_word
-                        i += 1
-                        merged = True
-                        continue
-                        
-                    if next_word.lower() in ENCLITICS:
-                        word += next_word
-                        i += 1
+                        word = words[i]
+                        group.append(word)
                         merged = True
                         continue
 
-                if not has_greek_chars(word): 
-                    if word.strip(): fragments.append(escape(word))
+                    if group[0].lower() in PROCLITICS and len(group) == 1:
+                        i += 1
+                        word = words[i]
+                        group.append(word)
+                        merged = True
+                        continue
+
+                    if next_word.lower() in ENCLITICS:
+                        i += 1
+                        word = words[i]
+                        group.append(word)
+                        merged = True
+                        continue
+
+                if not any(has_greek_chars(w) for w in group):
+                    joined = " ".join(group)
+                    if joined.strip(): fragments.append(escape(joined))
                     i += 1
                     continue
 
-                words_since_breath += 1
+                words_since_breath += len(group)
                 if words_since_breath > max_breath:
-                    if is_breath_trigger(word) or words_since_breath >= force_breath:
+                    if is_breath_trigger(group[0]) or words_since_breath >= force_breath:
                         fragments.append(f'<break time="{t_breath}"/>')
                         words_since_breath = 0
-                
+
                 # Downdrift
                 if total_sentence_words > 1:
                     position_ratio = current_word_idx / (total_sentence_words - 1)
                 else:
                     position_ratio = 0.0
-                
-                current_baseline  = current_drift_start + ((current_drift_end - current_drift_start) * position_ratio)
-                current_word_idx += 1
 
-                # Phonology
-                w_data     = analyze_word_data(word)
-                dummy_text = romanize_greek(word)
-                
-                if w_data and dummy_text:
-                    ipa               = w_data["ipa"]
-                    contour, dur_rate = calculate_prosody(w_data, baseline_shift=current_baseline)
-                    
-                    # SSML Safety (Escape XML chars)
-                    safe_text  = escape(dummy_text)
-                    ph_tag     = f'<phoneme alphabet="ipa" ph="{ ipa }">{ safe_text }</phoneme>'
-                    final_ssml = ph_tag
-                    
-                    if dur_rate != "0%":
-                        final_ssml = f'<prosody rate="{dur_rate}">{final_ssml}</prosody>'
-                    if contour:
-                        final_ssml = f'<prosody contour="{contour}">{final_ssml}</prosody>'
-                    
-                    fragments.append(final_ssml)
-                    
-                    debug_entries.append({
-                        "greek":     word,
-                        "roman":     dummy_text,
-                        "downdrift": int(current_baseline),
-                        "contour":   contour
-                    })
-                else:
-                    fragments.append(escape(dummy_text))
-                
-                # Append space if we are not at end of chunk (Sandhi merge logic removed as it is handled above)
-                if i < len(words) - 1: 
+                current_baseline  = current_drift_start + ((current_drift_end - current_drift_start) * position_ratio)
+                current_word_idx += len(group)
+
+                # Phonology: transcribe each word individually, then concatenate IPA
+                group_ipa_parts = []
+                group_accent_type = "none"
+                group_accent_ipa_idx = -1
+                running_ipa_len = 0
+
+                for gw in group:
+                    if not has_greek_chars(gw):
+                        continue
+                    w_data = analyze_word_data(gw)
+                    if w_data:
+                        group_ipa_parts.append(w_data["ipa"])
+                        # Use the accent from the first content word
+                        # (proclitics are unaccented, enclitics yield to host)
+                        if w_data["accent_type"] != "none" and group_accent_type == "none":
+                            group_accent_type = w_data["accent_type"]
+                            group_accent_ipa_idx = running_ipa_len + w_data["accent_idx"]
+                        running_ipa_len += len(w_data["ipa"])
+
+                combined_ipa = "".join(group_ipa_parts)
+
+                if not combined_ipa:
+                    dummy_text = romanize_greek(" ".join(group))
+                    if dummy_text.strip():
+                        fragments.append(escape(dummy_text))
+                    i += 1
+                    continue
+
+                # Check heaviness across the group
+                is_heavy = any(
+                    (TRANSCRIPTION_CACHE["words"].get(gw, {}).get("is_heavy", False))
+                    for gw in group if has_greek_chars(gw)
+                )
+
+                # Build a synthetic word_data for the prosodic group
+                group_word_data = {
+                    "ipa":         combined_ipa,
+                    "accent_type": group_accent_type,
+                    "accent_idx":  group_accent_ipa_idx,
+                    "is_heavy":    is_heavy,
+                    "len":         len(combined_ipa)
+                }
+
+                dummy_text = romanize_greek(" ".join(group))
+                contour, dur_rate = calculate_prosody(group_word_data, baseline_shift=current_baseline)
+
+                # SSML Safety (Escape XML chars)
+                safe_text  = escape(dummy_text)
+                ph_tag     = f'<phoneme alphabet="ipa" ph="{combined_ipa}">{safe_text}</phoneme>'
+                final_ssml = ph_tag
+
+                if dur_rate != "0%":
+                    final_ssml = f'<prosody rate="{dur_rate}">{final_ssml}</prosody>'
+                if contour:
+                    final_ssml = f'<prosody contour="{contour}">{final_ssml}</prosody>'
+
+                fragments.append(final_ssml)
+
+                debug_entries.append({
+                    "greek":     " ".join(group),
+                    "roman":     dummy_text,
+                    "ipa":       combined_ipa,
+                    "accent":    group_accent_type,
+                    "downdrift": int(current_baseline),
+                    "contour":   contour
+                })
+
+                # Append space if not at end of chunk
+                if i < len(words) - 1:
                     fragments.append(" ")
-                
+
                 i += 1
 
     return fragments, debug_entries
@@ -717,71 +897,111 @@ def build_ssml_fragments(full_text):
 # 6. A U D I O  R E N D E R E R
 # ==============================================================================
 
-def fix_wav_header(wav_bytes):
-    if len(wav_bytes) < 44: return wav_bytes
-    total_size     = len(wav_bytes)
-    chunk_size     = total_size - 8
-    subchunk2_size = total_size - 44
-    new_header     = wav_bytes[:4] + struct.pack('<I', chunk_size) + wav_bytes[8:40] + struct.pack('<I', subchunk2_size) + wav_bytes[44:]
-    return new_header
+def parse_wav_fmt(wav_bytes):
+    """
+    Parses a RIFF/WAVE file and extracts the fmt chunk parameters and
+    the raw audio payload from the data chunk.
+    Returns (fmt_bytes, audio_payload) or (None, None) on failure.
+    fmt_bytes is the complete fmt subchunk (id + size + body).
+    """
+    if len(wav_bytes) < 12:
+        return None, None
+
+    if wav_bytes[0:4] != b'RIFF' or wav_bytes[8:12] != b'WAVE':
+        return None, None
+
+    pos = 12
+    length = len(wav_bytes)
+    fmt_chunk = None
+    data_payload = None
+
+    while pos + 8 <= length:
+        chunk_id = wav_bytes[pos:pos+4]
+        try:
+            chunk_size = struct.unpack('<I', wav_bytes[pos+4:pos+8])[0]
+        except struct.error:
+            break
+
+        chunk_body = wav_bytes[pos+8:pos+8+chunk_size]
+
+        if chunk_id == b'fmt ':
+            # Store the entire subchunk: id + size + body
+            fmt_chunk = wav_bytes[pos:pos+8+chunk_size]
+        elif chunk_id == b'data':
+            data_payload = chunk_body
+
+        pos += 8 + chunk_size
+        # WAV chunks must be word-aligned
+        if chunk_size % 2 == 1:
+            pos += 1
+
+    return fmt_chunk, data_payload
+
+def build_wav_file(fmt_chunk, all_payloads):
+    """
+    Constructs a complete, valid RIFF/WAVE file from a fmt subchunk
+    and a list of raw PCM audio payloads.
+    """
+    combined_data = b''.join(all_payloads)
+    data_chunk = b'data' + struct.pack('<I', len(combined_data)) + combined_data
+
+    wave_body = fmt_chunk + data_chunk
+    riff_header = b'RIFF' + struct.pack('<I', 4 + len(wave_body)) + b'WAVE'
+
+    return riff_header + wave_body
 
 def extract_wav_payload(wav_bytes):
     """
     Robustly parses RIFF/WAVE structure to find the 'data' chunk.
     This prevents corruption if Google adds metadata headers.
     """
-    if len(wav_bytes) < 12: return b""
-    
-    # Check RIFF header
-    if wav_bytes[0:4] != b'RIFF': return b""
-    if wav_bytes[8:12] != b'WAVE': return b""
-
-    # Start searching after the 12-byte header
-    pos = 12
-    length = len(wav_bytes)
-
-    while pos + 8 < length:
-        # Read Chunk ID (4 bytes) and Size (4 bytes, little endian)
-        chunk_id = wav_bytes[pos : pos+4]
-        try:
-            chunk_size = struct.unpack('<I', wav_bytes[pos+4 : pos+8])[0]
-        except struct.error:
-            break # Malformed tail
-
-        if chunk_id == b'data':
-            # FOUND IT: Return the audio data inside this chunk
-            return wav_bytes[pos+8 : pos+8+chunk_size]
-        
-        # If not 'data', skip this chunk and look at the next one
-        # (+8 accounts for the ID and Size bytes we just read)
-        pos += 8 + chunk_size
-        
-        # Safety alignment (WAV chunks must be word-aligned)
-        if chunk_size % 2 == 1:
-            pos += 1
+    _, payload = parse_wav_fmt(wav_bytes)
+    if payload is not None:
+        return payload
 
     # Fallback: If parsing fails, assume standard header size (44 bytes)
-    # This catches cases where the file might be raw PCM but labelled WAV
-    return wav_bytes[44:]
+    if len(wav_bytes) > 44:
+        return wav_bytes[44:]
+    return b""
 
-def fetch_audio_bytes(client, ssml_chunk, voice_params, audio_config):
+def fetch_audio_bytes(client, ssml_chunk, voice_params, audio_config, max_retries=3):
+    """
+    Sends an SSML chunk to Google Cloud TTS with retry logic.
+    Retries on transient errors with exponential backoff.
+    """
     synthesis_input = texttospeech.SynthesisInput(ssml=ssml_chunk)
-    try:
-        response = client.synthesize_speech(
-            request = texttospeech.SynthesizeSpeechRequest(
-                input = synthesis_input, voice=voice_params, audio_config=audio_config
-            )
-        )
-        return response.audio_content
-    except Exception as e:
-        print(f"    -> API Error: {e}")
-        return None
 
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = client.synthesize_speech(
+                request=texttospeech.SynthesizeSpeechRequest(
+                    input=synthesis_input, voice=voice_params, audio_config=audio_config
+                )
+            )
+            return response.audio_content
+        except Exception as e:
+            error_str = str(e).lower()
+            # Determine if this is a retryable error
+            is_transient = any(keyword in error_str for keyword in [
+                "unavailable", "deadline", "timeout", "503", "500",
+                "internal", "resource_exhausted", "429"
+            ])
+
+            if is_transient and attempt < max_retries:
+                wait = 2 ** attempt
+                print(f"    -> API Error (attempt {attempt}/{max_retries}): {e}")
+                print(f"    -> Retrying in {wait}s...")
+                time.sleep(wait)
+            else:
+                print(f"    -> API Error (FATAL after {attempt} attempts): {e}")
+                return None
+
+    return None
 def generate_audio():
     input_path = config["files"].get("input_text", "input.txt")
     output_dir = config["tts"].get("output_dir", "output")
     debug_path = config["files"].get("debug_file", "debug_dump.json")
-    
+
     voice_name = config["tts"].get("voice_name", "de-DE-Chirp3-HD-Enceladus")
     rate       = config["tts"].get("speaking_rate", 1.0)
     audio_enc  = config["tts"].get("audio_encoding", "LINEAR16")
@@ -792,107 +1012,131 @@ def generate_audio():
     dry_run = config["options"].get("dry_run", False)
 
     ext = "wav" if audio_enc == "LINEAR16" else "mp3"
-    
+
     if not os.path.exists(input_path):
         print(f"Error: {input_path} not found.")
         return
 
     with open(input_path, "r", encoding="utf-8") as f: content = f.read()
     sections = [s.strip() for s in content.split(delimiter) if s.strip()]
-    
-    print(f":: Processing { len(sections) } sections...")
+
+    print(f":: Processing {len(sections)} sections...")
     if dry_run: print(":: DRY RUN MODE: No audio will be generated.")
-    
+
     client = None
-    # Ensure output directory exists even for dry runs (for debug/playlist files)
-    os.makedirs(output_dir, exist_ok = True) 
+    os.makedirs(output_dir, exist_ok=True)
     if not dry_run:
         client = texttospeech.TextToSpeechClient()
-        os.makedirs(output_dir, exist_ok = True)
-    
+
     lang_code    = "-".join(voice_name.split("-")[:2])
     voice_params = texttospeech.VoiceSelectionParams(language_code=lang_code, name=voice_name)
-    
+
     encoding_enum = texttospeech.AudioEncoding.LINEAR16
     if audio_enc == "MP3": encoding_enum = texttospeech.AudioEncoding.MP3
-    
+
     audio_cfg = texttospeech.AudioConfig(
-        audio_encoding = encoding_enum, speaking_rate = rate, pitch = pitch_val
+        audio_encoding=encoding_enum, speaking_rate=rate, pitch=pitch_val
     )
 
     full_debug_log = []
-    generated_files = [] 
+    generated_files = []
     total_chars = 0
 
-    for i, text in enumerate(sections):
+    for sec_idx, text in enumerate(sections):
         total_chars += len(text)
-        print(f":: Generating Section {i+1}...")
+        print(f":: Generating Section {sec_idx+1}...")
         fragments, section_debug = build_ssml_fragments(text)
-        
+
         # Construct FULL SSML for debug log in both modes
         full_ssml_string = "".join(fragments)
-        
-        # IMPROVEMENT: Enhanced Debug Dump logic
+
         if dry_run:
-            print(f"    [Dry Run] Section {i+1} processed.")
-            # Preview first 200 chars
+            print(f"    [Dry Run] Section {sec_idx+1} processed.")
             preview = full_ssml_string[:200].replace("\n", " ")
             print(f"    [SSML Preview] {preview}...")
-            
-            full_debug_log.append({ 
-                "section": i+1, 
+
+            full_debug_log.append({
+                "section": sec_idx+1,
                 "mode": "dry_run",
                 "ssml": full_ssml_string,
-                "analysis": section_debug 
+                "analysis": section_debug
             })
             continue
 
+        # --- Audio Generation with Proper WAV Construction ---
         current_ssml_parts = ["<speak>"]
         current_length     = len("<speak>")
-        final_audio_bytes  = bytearray()
-        
+
+        # For WAV: collect fmt chunk from first response, payloads from all
+        fmt_chunk      = None
+        audio_payloads = []
+        # For MP3: just concatenate bytes
+        mp3_buffer     = bytearray()
+
+        chunk_count = 0
+
         def flush_buffer(parts):
+            nonlocal fmt_chunk, chunk_count
             parts.append("</speak>")
-            return fetch_audio_bytes(client, "".join(parts), voice_params, audio_cfg)
+            ssml_string = "".join(parts)
+            chunk_bytes = fetch_audio_bytes(client, ssml_string, voice_params, audio_cfg)
+
+            if chunk_bytes is None:
+                print(f"    [!] Chunk {chunk_count+1} failed — gap in audio.")
+                return
+
+            chunk_count += 1
+
+            if audio_enc == "LINEAR16":
+                parsed_fmt, parsed_payload = parse_wav_fmt(chunk_bytes)
+
+                if parsed_fmt is None or parsed_payload is None:
+                    print(f"    [!] Warning: Could not parse WAV chunk {chunk_count}. Attempting fallback.")
+                    # Fallback: assume 44-byte header
+                    if fmt_chunk is None and len(chunk_bytes) >= 44:
+                        fmt_chunk = chunk_bytes[12:36]  # standard fmt chunk
+                    if len(chunk_bytes) > 44:
+                        audio_payloads.append(chunk_bytes[44:])
+                    return
+
+                if fmt_chunk is None:
+                    fmt_chunk = parsed_fmt
+
+                audio_payloads.append(parsed_payload)
+            else:
+                mp3_buffer.extend(chunk_bytes)
+
+            print(f"    -> Processed chunk {chunk_count}.")
 
         for frag in fragments:
             frag_len = len(frag.encode('utf-8'))
             if current_length + frag_len + len("</speak>") > max_bytes:
-                chunk_bytes = flush_buffer(current_ssml_parts)
-                if chunk_bytes:
-                    if len(final_audio_bytes) == 0:
-                        final_audio_bytes += chunk_bytes
-                    else:
-                        if audio_enc == "LINEAR16":
-                            final_audio_bytes += extract_wav_payload(chunk_bytes)
-                        else:
-                            final_audio_bytes += chunk_bytes
-                print(f"    -> Stitched chunk.")
+                flush_buffer(current_ssml_parts)
                 current_ssml_parts = ["<speak>"]
                 current_length     = len("<speak>")
             current_ssml_parts.append(frag)
             current_length += frag_len
-        
+
         if len(current_ssml_parts) > 1:
-            chunk_bytes = flush_buffer(current_ssml_parts)
-            if chunk_bytes:
-                if len(final_audio_bytes) == 0:
-                    final_audio_bytes += chunk_bytes
-                else:
-                    if audio_enc == "LINEAR16":
-                        # Use robust payload extraction
-                        final_audio_bytes += extract_wav_payload(chunk_bytes)
-                    else:
-                        final_audio_bytes += chunk_bytes
+            flush_buffer(current_ssml_parts)
 
-        if audio_enc == "LINEAR16" and len(final_audio_bytes) > 44:
-            final_audio_bytes = fix_wav_header(final_audio_bytes)
+        # --- Assemble Final Audio ---
+        final_audio_bytes = b""
 
+        if audio_enc == "LINEAR16":
+            if fmt_chunk and audio_payloads:
+                final_audio_bytes = build_wav_file(fmt_chunk, audio_payloads)
+            else:
+                print("    [!] Error: No valid WAV data collected.")
+        else:
+            final_audio_bytes = bytes(mp3_buffer)
+
+        # --- Generate Filename ---
         greek_slug = "".join([c for c in text[:40] if has_greek_chars(c) or c.isspace()])
         safe_slug  = sanitize_filename(greek_slug)
-        if not safe_slug: safe_slug = f"section_{i+1}"
-        
-        filename    = f"{i+1:02d}_{safe_slug}_{voice_name}_{str(rate)}.{ext}"
+        if not safe_slug: safe_slug = f"section_{sec_idx+1}"
+
+        filename    = f"{sec_idx+1:02d}_{safe_slug}_{voice_name}_{str(rate)}.{ext}"
         output_path = os.path.join(output_dir, filename)
 
         if final_audio_bytes:
@@ -900,18 +1144,20 @@ def generate_audio():
             print(f"    -> Saved: {output_path}")
             generated_files.append(filename)
         else:
-            print("    [!] Error: No audio generated.")
+            print("    [!] Error: No audio generated for this section.")
 
-        full_debug_log.append({ "section": i+1, "analysis": section_debug })
-        
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(TRANSCRIPTION_CACHE, f, ensure_ascii=False, indent=2)
+        full_debug_log.append({"section": sec_idx+1, "analysis": section_debug})
 
+        # Save cache after every section for crash safety
+        save_cache()
+
+    # --- Post-Processing ---
     if dry_run:
+        # Chirp3-HD pricing may differ from WaveNet; this is a rough estimate.
         est_cost = (total_chars / 1_000_000) * 16.00
         print(f"\n:: DRY RUN COMPLETE")
         print(f":: Total Characters: {total_chars}")
-        print(f":: Estimated Cost (WaveNet Pricing): ${est_cost:.2f} USD")
+        print(f":: Estimated Cost (WaveNet Pricing — verify for Chirp3-HD): ${est_cost:.2f} USD")
     elif generated_files:
         playlist_path = os.path.join(output_dir, "playlist.m3u")
         with open(playlist_path, "w", encoding="utf-8") as f:
@@ -919,17 +1165,16 @@ def generate_audio():
                 f.write(f"{fname}\n")
         print(f":: Playlist created: {playlist_path}")
 
-    with open(CACHE_FILE, "w", encoding="utf-8") as f:
-        json.dump(TRANSCRIPTION_CACHE, f, ensure_ascii=False, indent=2)
+    save_cache()
     print(":: Transcription cache updated.")
 
     with open(debug_path, "w", encoding="utf-8") as f:
         json.dump(full_debug_log, f, indent=2, ensure_ascii=False)
+    print(f":: Debug log written to: {debug_path}")
 
 if __name__ == "__main__":
     try:
         generate_audio()
     except KeyboardInterrupt:
-        with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(TRANSCRIPTION_CACHE, f, ensure_ascii=False, indent=2)
+        save_cache()
         print("\n:: Interrupted. Cache saved.")
