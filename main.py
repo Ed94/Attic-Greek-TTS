@@ -1713,7 +1713,20 @@ def build_ssml_fragments(full_text):
             current_drift_start = updrift_start
             current_drift_end   = updrift_end
 
-        part_pattern = r'([,·:\-]|\.|\|\|DBL_BRK\|\|)'
+        # --- Short-Sentence Downdrift Scaling ---
+        # For sentences with fewer than 5 content words, compress the
+        # downdrift range to prevent the slope from being too steep.
+        # A 3-word sentence gets 60% of the full range, a 2-word sentence
+        # gets 40%, etc. Sentences with 5+ words get the full configured range.
+        downdrift_min_words = 5
+        if total_sentence_words < downdrift_min_words and total_sentence_words > 0:
+            scale               = total_sentence_words / downdrift_min_words
+            midpoint            = (current_drift_start + current_drift_end) / 2
+            half_range          = (current_drift_start - current_drift_end) / 2
+            current_drift_start = midpoint + half_range * scale
+            current_drift_end   = midpoint - half_range * scale
+
+        part_pattern = r'([,·;:\-]|\.|\|\|DBL_BRK\|\|)'
         parts        = re.split(part_pattern, sentence)
 
         words_since_breath = 0

@@ -95,7 +95,7 @@ debug_file        = 'debug_dump.json'
 
 [processing]
 # Delimiter for separating text into different mp3 files
-sections_to_generate = [8, 11, 17, 18]
+sections_to_generate = []
 delimiter            = "---"
 max_chunk_bytes      = 4500
 
@@ -121,18 +121,27 @@ force_breath_words = 20 # Force a breath if no natural spot found by this count
 
 [prosody]
 # PITCH SETTINGS (Integers representing % change)
-contour_peak        = 30     # The "Singing" peak of an Acute accent relative to current baseline
-contour_grave       = 5      # The suppressed pitch of a Grave accent
-contour_end         = -16    # How far pitch drops at the end of a word
+# contour_peak        = 30     # The "Singing" peak of an Acute accent relative to current baseline
+# contour_grave       = 5      # The suppressed pitch of a Grave accent
+# contour_end         = -16    # How far pitch drops at the end of a word
 circumflex_tail_len = 21     # Length of the Circumflex fall (% of word duration)
 heavy_word_rate     = "-18%" # Speed slowdown for heavy words (e.g. -15%)
 # DOWNDRIFT (The "Human" Factor)
 # Sentences start high and drift lower. 
 # This prevents the "Robot List" effect.
-downdrift_start =  10  # Start sentence higher than average
-downdrift_end   = -17  # End sentence lower than average
-updrift_start   = -5   # Used if sentence ends with ; we use updrift instead
-updrift_end     =  15 
+# downdrift_start =  10  # Start sentence higher than average
+# downdrift_end   = -17  # End sentence lower than average
+# updrift_start   = -5   # Used if sentence ends with ; we use updrift instead
+# updrift_end     =  15 
+
+contour_peak = 15
+contour_grave = 3
+contour_end = -8
+downdrift_start = 5
+downdrift_end = -9
+updrift_start = -3
+updrift_end = 8
+
 
 max_total_excursion = 50
 

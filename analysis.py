@@ -292,7 +292,7 @@ def generate_full_analysis(wav_path, output_prefix, title="", debug_data=None):
     has_words = debug_data and any(e.get("greek") for e in debug_data)
     n_panels  = 4 if has_words else 3
 
-    fig, axes = plt.subplots(n_panels, 1, figsize=(18, 4 * n_panels), sharex=True)
+    fig, axes = plt.subplots(n_panels, 1, figsize=(15, 4 * n_panels), sharex=True)
     fig.suptitle(title, fontsize=14, fontweight='bold')
 
     # Panel 1: Spectrogram + F0
@@ -385,7 +385,7 @@ def generate_full_analysis(wav_path, output_prefix, title="", debug_data=None):
     plt.tight_layout()
 
     png_path = f"{output_prefix}.png"
-    plt.savefig(png_path, dpi=72, bbox_inches='tight')
+    plt.savefig(png_path, dpi=120, bbox_inches='tight')
     plt.close()
     print(f"  Saved: {png_path}")
 
