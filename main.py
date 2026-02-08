@@ -1955,15 +1955,40 @@ def fetch_audio_bytes(client, ssml_chunk, voice_params, audio_config, max_retrie
 
     return None
 
-def generate_audio():
-    input_path = config["files"].get("input_text", "input.txt")
-    output_dir = config["tts"].get("output_dir", "output")
-    debug_path = config["files"].get("debug_file", "debug_dump.json")
+def load_sections(input_path: str, delimiter: str, section_filter: list[int] | None = None) -> list[tuple[int, str]]:
+    """
+    Load sections from a text file, split by '---' delimiters.
+    Lines starting with '#' within a section are stripped as comments.
+    Returns list of (section_number, text) tuples.
+    section_filter: if non-empty, only return sections whose 1-based index is in the list.
+    """
+    sections = []
+    with open(input_path, "r", encoding="utf-8") as f: 
+        content = f.read()
+        blocks  = content.split(delimiter)
+        for i, block in enumerate(blocks):
+            # Strip comment lines and blank lines
+            lines = []
+            for line in block.splitlines():
+                stripped = line.strip()
+                if stripped and not stripped.startswith("#"):
+                    lines.append(stripped)
+            text = " ".join(lines).strip()
+            if not text:
+                continue
+            section_num = len(sections) + 1
+            sections.append((section_num, text))
+        
+        if section_filter:
+            sections = [(num, text) for num, text in sections if num in section_filter]
+    
+    return sections
 
+def generate_audio():
     # Load Cdef generate_audio():
-    input_path = config["files"].get("input_text", "input.txt")
-    output_dir = config["tts"].get("output_dir", "output")
-    debug_path = config["files"].get("debug_file", "debug_dump.json")
+    input_path     = config["files"].get("input_text", "input.txt")
+    output_dir     = config["files"].get("output_dir", "output")
+    debug_path     = config["files"].get("debug_file", "debug_dump.json")
 
     # Load Config
     voice_name = config["tts"].get("voice_name", "de-DE-Standard-E")
@@ -1974,14 +1999,14 @@ def generate_audio():
     delimiter  = config["processing"].get("delimiter", "---")
     dry_run    = config["options"].get("dry_run", False)
 
+    section_filter = config["processing"].get("sections_to_generate", [])
+
     ext = "wav" if audio_enc == "LINEAR16" else "mp3"
 
     if not os.path.exists(input_path):
         print(f"Error: {input_path} not found.")
         return
-
-    with open(input_path, "r", encoding="utf-8") as f: content = f.read()
-    sections = [s.strip() for s in content.split(delimiter) if s.strip()]
+    sections = load_sections(input_path, delimiter, section_filter)
 
     print(f":: Processing {len(sections)} sections...")
     if dry_run: print(":: DRY RUN MODE: No audio will be generated.")
@@ -2017,17 +2042,17 @@ def generate_audio():
     generated_files = []
     total_chars = 0
 
-    for sec_idx, text in enumerate(sections):
+    for section_num, text in sections:
         total_chars += len(text)
-        print(f":: Generating Section {sec_idx+1}...")
+        print(f":: Generating Section {section_num}...")
         fragments, section_debug = build_ssml_fragments(text)
 
         full_ssml_string = "".join(fragments)
 
         if dry_run:
-            print(f"    [Dry Run] Section {sec_idx+1} processed.")
+            print(f"    [Dry Run] Section {section_num} processed.")
             full_debug_log.append({
-                "section": sec_idx+1,
+                "section": section_num,
                 "mode": "dry_run",
                 "ssml": full_ssml_string,
                 "analysis": section_debug
@@ -2149,9 +2174,9 @@ def generate_audio():
         # --- Save File ---
         greek_slug = "".join([c for c in text[:40] if has_greek_chars(c) or c.isspace()])
         safe_slug  = sanitize_filename(greek_slug)
-        if not safe_slug: safe_slug = f"section_{sec_idx+1}"
+        if not safe_slug: safe_slug = f"section_{section_num}"
 
-        filename    = f"{sec_idx+1:02d}_{safe_slug}_{voice_name}_{str(rate)}.{ext}"
+        filename    = f"{section_num:02d}_{safe_slug}_{voice_name}_{str(rate)}.{ext}"
         output_path = os.path.join(output_dir, filename)
 
         if final_audio_bytes:
@@ -2162,7 +2187,7 @@ def generate_audio():
             print("    [!] Error: No audio generated for this section.")
 
         # Log debug info
-        section_debug_entry = {"section": sec_idx+1, "analysis": section_debug}
+        section_debug_entry = {"section": section_num, "analysis": section_debug}
         if failed_chunks:
             section_debug_entry["failed_chunks"] = failed_chunks
             section_debug_entry["note"] = "Silence placeholders inserted."

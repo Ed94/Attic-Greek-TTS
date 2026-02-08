@@ -1,4 +1,4 @@
-# Attic Greek TTS using Google's Chrip 3
+# Attic Greek TTS using Google's Text-To-Speech Cloud API
 
 idk if this is accurate. This was done in an afternoon. Used gemini 3 pro for the attic rules. I made this after watching some podcasts and being confused on why tts was so behind for older langauges.
 

@@ -85,18 +85,19 @@ voice_name = "de-DE-Polyglot-1" # Male ($16.00/1M)
 # Chirp 3 works best with uncompressed audio (WAV)
 audio_encoding   = "LINEAR16" 
 speaking_rate    = 0.90
-output_dir       = "./output"
 pitch            = 0.0
 
 [files]
-input_text        = "input.txt"
+input_text        = "test_corpus.txt"
+output_dir        = "./output"
 intermediate_data = "staging_data.json"
 debug_file        = 'debug_dump.json'
 
 [processing]
 # Delimiter for separating text into different mp3 files
-delimiter       = "---"
-max_chunk_bytes = 4500
+sections_to_generate = [4, 5, 7, 9, 15]
+delimiter            = "---"
+max_chunk_bytes      = 4500
 
 [cltk]
 # Options: "Attic", "Koine"
