@@ -1991,6 +1991,7 @@ def load_sections(input_path: str, delimiter: str, section_filter: list[int] | N
     """
     Load sections from a text file, split by '---' delimiters.
     Lines starting with '#' within a section are stripped as comments.
+    Blank lines are preserved — they drive paragraph break pauses in the SSML pipeline.
     Returns list of (section_number, text) tuples.
     section_filter: if non-empty, only return sections whose 1-based index is in the list.
     """
@@ -1999,13 +2000,23 @@ def load_sections(input_path: str, delimiter: str, section_filter: list[int] | N
         content = f.read()
         blocks  = content.split(delimiter)
         for i, block in enumerate(blocks):
-            # Strip comment lines and blank lines
+            # Strip comment lines but preserve blank lines for paragraph pacing.
+            # Replace comment lines with empty lines so surrounding blank-line
+            # structure is not collapsed (removing a comment between two blank
+            # lines would merge them into three newlines instead of two).
             lines = []
             for line in block.splitlines():
-                stripped = line.strip()
-                if stripped and not stripped.startswith("#"):
-                    lines.append(stripped)
-            text = " ".join(lines).strip()
+                if line.strip().startswith("#"):
+                    lines.append("")
+                else:
+                    lines.append(line)
+            
+            text = "\n".join(lines)
+            # Normalize runs of 3+ newlines down to 2 (one blank line).
+            # This prevents comment removal from inflating pause counts.
+            text = re.sub(r'\n{3,}', '\n\n', text)
+            text = text.strip()
+            
             if not text:
                 continue
             section_num = len(sections) + 1
@@ -2015,6 +2026,7 @@ def load_sections(input_path: str, delimiter: str, section_filter: list[int] | N
             sections = [(num, text) for num, text in sections if num in section_filter]
     
     return sections
+
 
 def generate_audio():
     # Load Cdef generate_audio():

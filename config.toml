@@ -88,8 +88,8 @@ speaking_rate    = 0.90
 pitch            = 0.0
 
 [files]
-input_text        = "input.old.txt"
-output_dir        = "./output-old"
+input_text        = "test_corpus.txt"
+output_dir        = "./output"
 intermediate_data = "staging_data.json"
 debug_file        = 'debug_dump.json'
 
