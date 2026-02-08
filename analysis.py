@@ -36,6 +36,8 @@ DELIMITER     = config["processing"].get("delimiter", "---")
 
 EXT = "wav" if AUDIO_ENC == "LINEAR16" else "mp3"
 
+SPIKE_THRESHOLD = 400
+
 # Pitch extraction parameters
 PITCH_FLOOR    = 75
 PITCH_CEILING  = 400
@@ -536,7 +538,7 @@ def generate_summary_report(all_metrics, section_titles, output_path):
             lines.append(f"    Downdrift:  {seg_str}")
 
         # Flag anomalies
-        if m['pitch']['max'] > 350:
+        if m['pitch']['max'] > SPIKE_THRESHOLD:
             lines.append(f"    ⚠ SPIKE: F0 max {m['pitch']['max']}Hz exceeds 350Hz — possible tracking error or voice overshoot")
         if abs(m['f0_intensity_corr']) > 0.5:
             lines.append(f"    ⚠ STRESS LEAK: High F0-intensity correlation ({m['f0_intensity_corr']})")
