@@ -385,7 +385,7 @@ def generate_full_analysis(wav_path, output_prefix, title="", debug_data=None):
     plt.tight_layout()
 
     png_path = f"{output_prefix}.png"
-    plt.savefig(png_path, dpi=150, bbox_inches='tight')
+    plt.savefig(png_path, dpi=72, bbox_inches='tight')
     plt.close()
     print(f"  Saved: {png_path}")
 

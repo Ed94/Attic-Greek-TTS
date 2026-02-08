@@ -1,133 +1,197 @@
 # test_corpus.txt
 #
-# Attic Greek TTS Test Corpus
+# Attic Greek TTS Test Corpus — v2
 #
 # Organized by phonetic feature under test. Each section isolates one or two
 # things so analysis.py spectrograms give clean, attributable results.
-# Sections are numbered for stable reference across runs.
 #
-# Conventions:
-#   - One Greek passage per line (no blank lines within a section)
-#   - Sections separated by blank lines
-#   - Comments start with #
+# Design principles:
+#   - Use REAL Attic Greek words only. No fabricated forms (CLTK produces
+#     garbage IPA on non-words, making spectral comparison meaningless).
+#   - Minimal pairs use attested forms that differ in the target feature.
+#   - Sections that test prosodic phenomena (downdrift, clause reset) use
+#     sentences long enough for the effect to develop (~5+ words).
+#   - Each section should be runnable independently via sections_to_generate.
+#   - Comments start with #, stripped by load_sections.
 #
 # ============================================================================
-# SECTION 1: VOWEL QUALITY — all five short monophthongs
-# Purpose: Confirm /a e i o u/ are pure monophthongs, not diphthongized.
-# Expected: Clean steady-state formants, no glides.
+# SECTION 1: VOWEL QUALITY — short monophthongs /a e i o u/
+# Purpose: Confirm pure monophthongs, no diphthongization.
+# Expected: Clean steady-state formants, no glides. Five distinct F1/F2
+# clusters on spectrogram.
+# Words chosen: CVC or CVCV, all acute, minimal consonant interference.
 # ============================================================================
 πάτερ, τέκνον, φίλος, λόγος, φύσις
 ---
 # ============================================================================
-# SECTION 2: VOWEL QUANTITY — minimal pairs short vs long
-# Purpose: Verify long vowels are measurably longer than short.
-# Expected: η noticeably longer than ε, ω longer than ο, etc.
+# SECTION 2: VOWEL QUANTITY — short vs long on same vowel quality
+# Purpose: Verify ε vs η and ο vs ω show measurable duration difference.
+# Expected: η duration ≥ 1.5× ε duration. ω duration ≥ 1.5× ο duration.
+# Analysis: measure vowel segment duration in Praat for each pair.
 # ============================================================================
-λύω λύσω
-στέφος στήλη
-ὅδε ὧδε
+λέγε λήθη
+πόλις πώλος
 ἔτι ἤδη
+νόμος νώμα
 ---
 # ============================================================================
-# SECTION 3: DIPHTHONGS — αι ει οι αυ ευ ου
+# SECTION 3: VOWEL QUANTITY — circumflex forces length on α ι υ
+# Purpose: α ι υ are ambiguous for length. Circumflex guarantees long.
+# Expected: circumflex α ι υ measurably longer than acute α ι υ.
+# ============================================================================
+τίνα τῖνα
+λύσαι λῦσαι
+δρᾶμα δράμα
+---
+# ============================================================================
+# SECTION 4: DIPHTHONGS — all six standard diphthongs
 # Purpose: Confirm diphthongs are two-element glides, not monophthongs.
 # Expected: Visible formant transitions within each diphthong nucleus.
+# One word per diphthong, all accented on the diphthong syllable.
 # ============================================================================
 αἴξ, εἶπε, οἶκος, αὐτός, εὖ, οὗτος
 ---
 # ============================================================================
-# SECTION 4: ACCENT — acute on each syllable position
-# Purpose: Test acute pitch peak on ultima, penult, antepenult.
-# Expected: F0 peak aligns with accented syllable regardless of position.
+# SECTION 5: DIPHTHONGS — ηυ and υι (rare diphthongs)
+# Purpose: Test the less common diphthongs that are easy to mishandle.
+# Expected: ηυ shows long first element + glide. υι shows front-rounded
+# onset + front glide.
 # ============================================================================
-θεός
-λόγος
-ἄνθρωπος
+ηὗρον, υἱός, υἱεῖς
 ---
 # ============================================================================
-# SECTION 5: ACCENT — circumflex rise-fall
-# Purpose: Verify circumflex produces rise-fall within one syllable.
-# Expected: F0 rises then falls on the circumflex syllable. Vowel is long.
+# SECTION 6: DIPHTHONG vs HIATUS — adjacent vowels that are NOT diphthongs
+# Purpose: Verify θέατρον has two syllables for εα, not one.
+# Expected: Two distinct vowel nuclei visible on spectrogram. No merging.
+# ============================================================================
+θέατρον
+ποιέω
+βοηθέω
+νέος
+ἐάω
+---
+# ============================================================================
+# SECTION 7: DIAERESIS — diphthong broken by trema
+# Purpose: Verify that diaeresis on second element prevents diphthong merger.
+# Expected: Two separate vowel nuclei where diaeresis is present.
+# Πηληϊάδεω has ηϊ which is hiatus, not diphthong.
+# ============================================================================
+Πηληϊάδεω
+ἡρωΐς
+πραΰς
+---
+# ============================================================================
+# SECTION 8: ACCENT — acute on ultima, penult, antepenult
+# Purpose: Test F0 peak alignment with accented syllable position.
+# Expected: Peak aligns with accented syllable regardless of position.
+# Three trisyllabic words, one for each position.
+# ============================================================================
+ἄνθρωπος
+ἀνθρώπου
+ἀνθρωποί
+---
+# ============================================================================
+# SECTION 9: ACCENT — circumflex rise-fall
+# Purpose: Verify circumflex produces rise then fall within one syllable.
+# Expected: F0 rises then falls on the circumflex syllable. Duration is long.
+# Mix of monosyllables and polysyllables.
 # ============================================================================
 τῆς
 σῶμα
 δῆμος
 πρᾶγμα
+μοῦσα
 τιμῆς
 ---
 # ============================================================================
-# SECTION 6: ACCENT — grave (suppressed acute)
-# Purpose: Grave should be lower/flatter than acute on same word.
-# Expected: Measurably lower F0 peak than acute version of same word.
-# ============================================================================
-τίς ἐστιν; τὶς ἄνθρωπος
-καλός ἐστιν. καλὸς ἀνήρ
----
-# ============================================================================
-# SECTION 7: ACCENT — circumflex vs acute minimal contrast
-# Purpose: Direct comparison on same/similar words.
+# SECTION 10: ACCENT — circumflex vs acute minimal contrast
+# Purpose: Direct comparison of circumflex vs acute on same/similar words.
 # Expected: Circumflex shows rise-fall, acute shows simple peak.
+# These are real attested forms with different accent types.
 # ============================================================================
 τίς τῆς
 λύσαι λῦσαι
-φῶς φώς
-μῆνις μένις
-οἶκος οἴκος
+μῆνις μένος
+οἶκος οἴκου
 ---
 # ============================================================================
-# SECTION 8: ACCENT — iota subscript words with circumflex
-# Purpose: Test that ᾳ ῃ ῳ with circumflex get proper long-vowel treatment.
-# Known issue: circumflex length enforcement was missing iota subscript.
+# SECTION 11: ACCENT — grave (suppressed acute)
+# Purpose: Grave should produce lower/flatter F0 than acute.
+# Expected: Measurably lower F0 peak on grave words vs same word with acute.
+# Grave appears on oxytones before the next word; acute before pause.
 # ============================================================================
-τῇ ᾄδω τῷ ᾅδης λόγῳ τιμῇ ᾠδή
+καλός.
+καλὸς ἀνήρ.
+θεός.
+θεὸς ἐστιν.
 ---
 # ============================================================================
-# SECTION 9: ASPIRATION — aspirated vs unaspirated stops
-# Purpose: Confirm φ θ χ produce [pʰ tʰ kʰ], not [f θ x].
-# Expected: Burst + aspiration noise visible on spectrogram before vowel.
+# SECTION 12: ACCENT — iota subscript with circumflex (perispomenon)
+# Purpose: ᾳ ῃ ῳ with circumflex must get long-vowel + rise-fall treatment.
+# Known issue from previous runs: spike on ᾄδω at sentence start.
+# Spread across separate short phrases to avoid baseline accumulation.
 # ============================================================================
-πάτερ φάτε
+τῇ γυναικί.
+ᾄδω καλῶς.
+τῷ ἀνδρί.
+τιμῇ μεγάλῃ.
+ᾠδή τις.
+---
+# ============================================================================
+# SECTION 13: ACCENT — properispomenon (circumflex on penult)
+# Purpose: Circumflex specifically on penult, not ultima.
+# Expected: Rise-fall on penult syllable. Ultima is lower.
+# ============================================================================
+πρᾶγμα
+σῶμα
+δοῦλος
+οἶνος
+μοῦσα
+---
+# ============================================================================
+# SECTION 14: ACCENT — circumflex tail_pct boundary on monosyllables
+# Purpose: Test monosyllabic circumflex where tail_pct could hit 100%.
+# Known issue: duplicate contour point when tail_pct reaches 100%.
+# ============================================================================
+ποῦ
+πῶς
+εὖ
+οὗ
+νοῦς
+---
+# ============================================================================
+# SECTION 15: ASPIRATION — aspirated vs unaspirated stop pairs
+# Purpose: Confirm φ θ χ produce [pʰ tʰ kʰ], not fricatives [f θ x].
+# Expected: Burst + aspiration noise visible before vowel onset.
+# Paired: unaspirated then aspirated, same vowel context.
+# ============================================================================
+πατήρ φατέ
 τέχνη δέκα
 κόρη χώρα
 ---
 # ============================================================================
-# SECTION 10: ROUGH BREATHING — word-initial [h]
+# SECTION 16: ROUGH BREATHING — word-initial [h] vs smooth
 # Purpose: Verify rough breathing produces aspiration, smooth does not.
 # Expected: Noise/frication before vowel onset for rough breathing words.
+# Real minimal pairs where available, near-pairs otherwise.
 # ============================================================================
-ὁρῶ ὀρῶ
+ὅς ὄς
 ἕξ ἐξ
-ἡμέρα ἐμέρα
-οἱ οἵ
+ἡμέρα ἐμέ
+οἵ οἱ
 ---
 # ============================================================================
-# SECTION 11: GEMINATE CONSONANTS — stop geminates
-# Purpose: Verify ττ ππ κκ have longer closure than single stops.
-# Expected: Longer silence gap in spectrogram at consonant closure.
+# SECTION 17: ROUGH BREATHING — voiceless rho (ῥ)
+# Purpose: Test ῥ → [hr] (or [r̥]) at word-initial position.
+# Expected: Audible aspiration or devoicing before/during the trill.
 # ============================================================================
-θάλαττα θάλασσα
-ἵππος ἴπος
-Ἀττική ἀτική
+ῥήτωρ
+ῥυθμός
+ῥίζα
 ---
 # ============================================================================
-# SECTION 12: GEMINATE CONSONANTS — sonorant geminates
-# Purpose: Test λλ μμ νν ρρ duration.
-# Expected: Longer sonorant segment (harder to see, but duration measurable).
-# ============================================================================
-ἄλλος ἄλος
-γράμμα γράμα
-ἔννοια ἔνοια
----
-# ============================================================================
-# SECTION 13: ZETA — ζ as [zd] or [dz]
-# Purpose: Verify ζ renders as a cluster, not simple [z].
-# Known issue: CLTK produces /zd/, German voice behavior unknown.
-# ============================================================================
-ζεύς, ζῷον, ἐλπίζω, ἅρμοζε
----
-# ============================================================================
-# SECTION 14: GAMMA NASALIZATION — γ before velars
-# Purpose: γγ γκ γχ should produce [ŋ] not [g].
+# SECTION 18: GAMMA NASALIZATION — γ before velars
+# Purpose: γγ γκ γχ should produce [ŋ] before the velar.
 # Expected: Nasal formant pattern before velar closure.
 # ============================================================================
 ἄγγελος
@@ -136,112 +200,50 @@
 σφίγξ
 ---
 # ============================================================================
-# SECTION 15: INTERROGATIVE INTONATION — short sentence
-# Purpose: Test terminal rise on short questions (known weak case).
-# Known issue: 2-word questions fail because unaccented final word gets
-# no contour tag, so updrift has nothing to apply to.
+# SECTION 19: GAMMA DE-NASALIZATION — γ before non-velars
+# Purpose: γν γμ γλ should produce [g], NOT [ŋ].
+# Expected: Velar stop closure, no nasal formant.
 # ============================================================================
-τίς ἐστιν;
-τί ἐστιν;
-ποῦ ἐστιν;
+γνώμη
+γνῶθι
+πρᾶγμα
 ---
 # ============================================================================
-# SECTION 16: INTERROGATIVE INTONATION — longer sentence
-# Purpose: Verify terminal rise works when slope has room to develop.
-# Expected: Clear F0 rise in final ~500ms.
+# SECTION 20: GEMINATE CONSONANTS — stop geminates
+# Purpose: Verify ττ ππ κκ have longer closure than surrounding context.
+# Expected: Longer silence gap at geminate closure. Compare closure duration
+# to single stops in the same word or adjacent words.
+# NOTE: All words are real Attic forms. No fabricated minimal pairs.
 # ============================================================================
-ἆρα τοῦτο ἀληθές ἐστιν;
-τίς τοῦτο τὸ πρᾶγμα ἐποίησεν;
-πότερον δίκαιον ἢ ἄδικον τοῦτο ἐστίν;
+θάλαττα
+ἵππος
+Ἀττική
+ἐκκλησία
 ---
 # ============================================================================
-# SECTION 17: DECLARATIVE INTONATION — downdrift
-# Purpose: Verify baseline pitch declines across a multi-word statement.
-# Expected: First accented peak highest, subsequent peaks progressively lower.
+# SECTION 21: GEMINATE CONSONANTS — sonorant and fricative geminates
+# Purpose: Test λλ μμ νν ρρ σσ duration.
+# Expected: Longer sonorant/fricative segment than single counterpart.
 # ============================================================================
-ὁ ἄνθρωπος τὸν λόγον λέγει.
-ὁ στρατηγὸς τοὺς στρατιώτας ἐκέλευσεν.
+ἄλλος
+γράμμα
+ἔννοια
+θάλασσα
 ---
 # ============================================================================
-# SECTION 18: DOWNDRIFT + CLAUSE BOUNDARY RESET
-# Purpose: After comma/colon, baseline should partially recover.
-# Expected: F0 baseline jumps up at clause boundary then resumes declining.
+# SECTION 22: ZETA — ζ as [zd]
+# Purpose: Verify ζ renders as a cluster, not simple [z].
+# Known issue: CLTK produces /zd/, German voice behavior unknown.
 # ============================================================================
-ὁ μὲν ἀνὴρ ἔλεγεν, ἡ δὲ γυνὴ ἤκουεν.
-ἐπεὶ δὲ ταῦτα ἐγένετο, οἱ Ἀθηναῖοι ἐβουλεύοντο.
+Ζεύς
+ζῷον
+ἐλπίζω
+ἁρμόζω
 ---
 # ============================================================================
-# SECTION 19: PROCLITICS AND ENCLITICS
-# Purpose: Test prosodic grouping of clitics with their host.
-# Expected: Proclitics and enclitics merge into host word's prosodic unit,
-# no spurious pauses or pitch resets between them.
-# ============================================================================
-ὁ ἀνήρ
-ἐκ τῆς πόλεως
-εἴ τις βούλεται
-ἄνθρωπός τις
-ἔστι τις ἐν τῇ πόλει
----
-# ============================================================================
-# SECTION 20: ELISION
-# Purpose: Test that elided forms (ἀλλ', δ', τ') are handled correctly.
-# Expected: No spurious vowel or pause at elision point.
-# ============================================================================
-ἀλλ' ἐγώ
-δ' ἄν
-τοῦτ' ἐστίν
-ἀπ' ἐκείνου
-καθ' ἡμέραν
----
-# ============================================================================
-# SECTION 21: CRASIS
-# Purpose: Test crasis forms (two words contracted into one).
-# Expected: Single prosodic word, coronis doesn't cause errors.
-# ============================================================================
-κἀγώ
-τοὐναντίον
-κἄν
-ταὐτά
----
-# ============================================================================
-# SECTION 22: HEAVY WORD RATE SLOWDOWN
-# Purpose: Test that polysyllabic words get slight rate reduction.
-# Known tuning question: does -15% sound natural or robotic?
-# ============================================================================
-στρατηγός
-ἐβουλεύοντο
-παρεσκευασμένος
-φιλοσοφία
----
-# ============================================================================
-# SECTION 23: NUMBERS
-# Purpose: Test number_to_greek conversion.
-# Known issue: numbers >= 1000 silently vanish.
-# ============================================================================
-αʹ βʹ γʹ ιʹ κʹ ρʹ
-τριακόσιοι
-ἑπτακόσιοι πεντήκοντα δύο
----
-# ============================================================================
-# SECTION 24: PITCH SPIKE STRESS TEST — long passage
-# Purpose: Provoke the pitch spike issue seen in Section 5 spectrograms.
-# Expected: No F0 excursions above ~300Hz. If spikes appear, contour
-# clamping is needed.
-# ============================================================================
-νόησον τοίνυν, ἣν δ' ἐγώ, ὥσπερ λέγομεν, δύο αὐτὼ εἶναι, καὶ βασιλεύειν τὸ μὲν νοητοῦ γένους τε καὶ τόπου, τὸ δ' αὖ ὁρατοῦ.
----
-# ============================================================================
-# SECTION 25: MIXED ACCENT DENSITY — all three accents in close proximity
-# Purpose: Test that acute, circumflex, and grave coexist cleanly.
-# Expected: Each accent type acoustically distinct even when adjacent.
-# ============================================================================
-τῶν καλῶν τὰς ψυχὰς ὁρᾷ ὁ σοφός.
-ἡ τοῦ ἀνδρὸς ψυχὴ ἀθάνατός ἐστιν.
----
-# ============================================================================
-# SECTION 26: CONSONANT CLUSTERS — word-initial clusters
-# Purpose: Test rendering of Greek-typical initial clusters.
-# Expected: Both consonants realized (no epenthetic vowels).
+# SECTION 23: CONSONANT CLUSTERS — word-initial clusters
+# Purpose: Test Greek-typical initial clusters that don't exist in German.
+# Expected: Both consonants realized, no epenthetic vowels inserted.
 # ============================================================================
 πνεῦμα
 κτῆμα
@@ -254,119 +256,163 @@
 μνήμη
 ---
 # ============================================================================
-# SECTION 27: SENTENCE-FINAL LENGTHENING
-# Purpose: Verify natural pre-pausal lengthening at sentence end.
-# Expected: Final syllable slightly longer than same syllable mid-sentence.
-# ============================================================================
-τοῦτο λέγω.
-λέγω τοῦτο τοῖς φίλοις.
----
-# ============================================================================
-# SECTION 28: REAL LITERARY PASSAGE — Plato, Apology 17a (opening)
-# Purpose: End-to-end test on authentic connected prose.
-# Expected: Natural-sounding continuous speech with all features working
-# together: downdrift, clause resets, mixed accents, proclitics.
-# ============================================================================
-ὅ τι μὲν ὑμεῖς, ὦ ἄνδρες Ἀθηναῖοι, πεπόνθατε ὑπὸ τῶν ἐμῶν κατηγόρων, οὐκ οἶδα· ἐγὼ δ' οὖν καὶ αὐτὸς ὑπ' αὐτῶν ὀλίγου ἐμαυτοῦ ἐπελαθόμην, οὕτω πιθανῶς ἔλεγον.
----
-# ============================================================================
-# SECTION 29: REAL LITERARY PASSAGE — Homer, Iliad 1.1-2
-# Purpose: Test dactylic hexameter. Long passage with many heavy syllables.
-# Expected: Appropriate pacing for epic meter. All aspirations and accents.
-# ============================================================================
-μῆνιν ἄειδε, θεά, Πηληϊάδεω Ἀχιλῆος οὐλομένην, ἣ μυρί' Ἀχαιοῖς ἄλγε' ἔθηκε,
----
-# ============================================================================
-# SECTION 30: REAL LITERARY PASSAGE — Thucydides 1.1
-# Purpose: Complex Thucydidean syntax, long periodic sentence.
-# Expected: Sustained downdrift with multiple clause resets.
-# ============================================================================
-Θουκυδίδης Ἀθηναῖος ξυνέγραψε τὸν πόλεμον τῶν Πελοποννησίων καὶ Ἀθηναίων, ὡς ἐπολέμησαν πρὸς ἀλλήλους, ἀρξάμενος εὐθὺς καθισταμένου καὶ ἐλπίσας μέγαν τε ἔσεσθαι καὶ ἀξιολογώτατον τῶν προγεγενημένων.
----
-# ============================================================================
-# SECTION 31: REAL LITERARY PASSAGE — Sophocles, Antigone 332-333
-# Purpose: Tragic trimeter. Different register from prose.
-# ============================================================================
-πολλὰ τὰ δεινὰ κοὐδὲν ἀνθρώπου δεινότερον πέλει.
----
-# ============================================================================
-# SECTION 32: EDGE CASE — single word, monosyllabic
-# Purpose: Test that single monosyllables don't crash or produce silence.
-# ============================================================================
-ὤ
-ἦ
-εἰ
----
-# ============================================================================
-# SECTION 33: EDGE CASE — single word, polysyllabic with many features
-# Purpose: Stress test on a single complex word in isolation.
-# Expected: All features (aspiration, geminate, accent) on one word.
-# ============================================================================
-παρεσκευασμένος
-ἀπεψηφισμένοι
-ἐπιτετηδευμένως
----
-# ============================================================================
-# SECTION 34: EDGE CASE — repeated identical words
-# Purpose: Verify no caching/deduplication artifacts across repetitions.
-# Expected: Each instance rendered identically with consistent prosody.
-# ============================================================================
-λόγος λόγος λόγος
-τῆς τῆς τῆς
----
-# ============================================================================
-# SECTION 35: EDGE CASE — empty IPA guard
-# Purpose: Test that words CLTK might fail on don't produce <phoneme ph="">
-# Known issue #9: no validation of empty IPA output.
-# ============================================================================
-ξυμμαχία
-ξυγγραφεύς
-ξυνέβη
----
-# ============================================================================
-# SECTION 36: CONSONANT — σ/ς word-final vs word-medial
+# SECTION 24: SIGMA — word-final vs word-medial
 # Purpose: Verify sigma renders consistently in both positions.
-# Expected: Same [s] quality regardless of position.
+# Expected: Same [s] quality regardless of position (no voicing difference).
 # ============================================================================
 σοφός σοφίας
 λύσις λύσεως
-ψεῦδος ψευδής
 ---
 # ============================================================================
-# SECTION 37: ACCENT — oxytone before pause vs before next word
-# Purpose: Acute on ultima should stay acute before pause (end of clause),
-# but become grave before next word in continuous speech.
-# Expected: θεός. has acute peak; θεὸς ἐστιν has suppressed peak.
+# SECTION 25: INTERROGATIVE INTONATION — short questions
+# Purpose: Test terminal rise on short questions.
+# Known issue: 2-word questions where final word is unaccented may fail
+# because updrift has nothing to apply to. The interrogative fix adds
+# a contour to accent=none words in question sentences.
+# Each question is a SEPARATE LINE to test sentence splitting on ;
 # ============================================================================
-θεός.
-θεὸς ἐστιν.
-καλός.
-καλὸς κἀγαθός.
+τίς ἐστιν;
+τί ἐστιν;
+ποῦ ἐστιν;
 ---
 # ============================================================================
-# SECTION 38: DIPHTHONG — spurious diphthong avoidance
-# Purpose: Verify that adjacent vowels NOT forming a diphthong are
-# rendered as separate syllables (hiatus or with synizesis as appropriate).
-# Expected: Two distinct vowel nuclei visible on spectrogram.
+# SECTION 26: INTERROGATIVE INTONATION — longer questions
+# Purpose: Verify terminal rise works when slope has room to develop.
+# Expected: Clear F0 rise in final ~500ms. Updrift visible in trend line.
 # ============================================================================
-θέατρον
-Ἠέλιος
-βοηθέω
-ποιέω
+ἆρα τοῦτο ἀληθές ἐστιν;
+τίς τοῦτο τὸ πρᾶγμα ἐποίησεν;
+πότερον δίκαιον ἢ ἄδικον τοῦτο ἐστίν;
 ---
 # ============================================================================
-# SECTION 39: ASPIRATION — inter-word aspiration from rough breathing
-# Purpose: When a word ending in a vowel precedes a rough-breathing word,
+# SECTION 27: DECLARATIVE INTONATION — downdrift
+# Purpose: Verify baseline pitch declines across a multi-word statement.
+# Expected: First accented peak highest, subsequent peaks progressively lower.
+# Two sentences, each 5+ words, all declarative.
+# ============================================================================
+ὁ ἄνθρωπος τὸν λόγον λέγει.
+ὁ στρατηγὸς τοὺς στρατιώτας ἐκέλευσεν.
+---
+# ============================================================================
+# SECTION 28: DOWNDRIFT + CLAUSE BOUNDARY RESET
+# Purpose: After comma/colon, baseline should partially recover.
+# Expected: F0 baseline jumps up at clause boundary then resumes declining.
+# Two sentences with medial commas to trigger rewind.
+# ============================================================================
+ὁ μὲν ἀνὴρ ἔλεγεν, ἡ δὲ γυνὴ ἤκουεν.
+ἐπεὶ δὲ ταῦτα ἐγένετο, οἱ Ἀθηναῖοι ἐβουλεύοντο.
+---
+# ============================================================================
+# SECTION 29: DOWNDRIFT — steep decline on short sentences
+# Purpose: The report flagged "may be too steep for short sentences" with
+# 28.2% mean decline. Test 3-word declaratives to see if the final word
+# gets crushed into creaky voice / inaudibly low pitch.
+# Expected: Final word should still be clearly voiced, not growled.
+# ============================================================================
+ὁ ἀνὴρ λέγει.
+τοῦτο καλόν ἐστιν.
+ὁ παῖς τρέχει.
+---
+# ============================================================================
+# SECTION 30: PROCLITICS — prosodic grouping
+# Purpose: Test that proclitics merge into host word's prosodic unit.
+# Expected: No spurious pause or pitch reset between proclitic and host.
+# The proclitic should be tonally flat, host carries the accent.
+# ============================================================================
+ὁ ἀνήρ
+ἐκ τῆς πόλεως
+εἰς τὴν πόλιν
+οὐκ ἔστιν
+---
+# ============================================================================
+# SECTION 31: ENCLITICS — prosodic grouping
+# Purpose: Test that enclitics merge after host, accent suppressed.
+# Expected: Enclitic has no independent pitch peak. Host accent governs.
+# ============================================================================
+ἄνθρωπός τις
+ἔστι τις ἐν τῇ πόλει
+λέγει τε καὶ πράττει
+ἔφη γε
+---
+# ============================================================================
+# SECTION 32: ELISION — sandhi across word boundary
+# Purpose: Test that elided forms (ἀλλ᾽, δ᾽, τοῦτ᾽) merge correctly.
+# Expected: No spurious vowel or pause at elision point. Smooth transition.
+# ============================================================================
+ἀλλ᾽ ἐγώ
+δ᾽ ἄν
+τοῦτ᾽ ἐστίν
+ἀπ᾽ ἐκείνου
+καθ᾽ ἡμέραν
+---
+# ============================================================================
+# SECTION 33: ELISION — unaccented elided word as non-host
+# Purpose: Verify that δ᾽ (unaccented, elided) is skipped as host and
+# the next accented word governs the prosodic group.
+# ============================================================================
+ὁ δ᾽ ἀνὴρ ἔλεγεν.
+τὸ δ᾽ ἔργον μέγα.
+---
+# ============================================================================
+# SECTION 34: CRASIS
+# Purpose: Test crasis forms (two words contracted, marked with koronis).
+# Expected: Single prosodic word, koronis doesn't cause errors.
+# ============================================================================
+κἀγώ
+τοὐναντίον
+κἄν
+ταὐτά
+---
+# ============================================================================
+# SECTION 35: HEAVY WORD RATE SLOWDOWN
+# Purpose: Test that polysyllabic heavy words get slight rate reduction.
+# Monosyllables should NOT slow down. Disyllables get half. Tri+ get full.
+# Expected: Duration differences visible in spectrogram word boundaries.
+# ============================================================================
+ψυχή
+στρατηγός
+ἐβουλεύοντο
+παρεσκευασμένος
+φιλοσοφία
+---
+# ============================================================================
+# SECTION 36: MIXED ACCENT DENSITY — all three types adjacent
+# Purpose: Test acute, circumflex, and grave coexisting in close proximity.
+# Expected: Each accent type acoustically distinct even when adjacent.
+# ============================================================================
+τῶν καλῶν τὰς ψυχὰς ὁρᾷ ὁ σοφός.
+ἡ τοῦ ἀνδρὸς ψυχὴ ἀθάνατός ἐστιν.
+---
+# ============================================================================
+# SECTION 37: BREATH PACING — trigger words
+# Purpose: Test that breath pauses insert at conjunction/preposition triggers
+# after max_breath_words threshold. Use a sentence >9 words with a trigger
+# word (καί) appearing after the threshold.
+# Expected: Audible breath pause before the trigger word.
+# ============================================================================
+ὁ ἀνὴρ τὸν λόγον ἔλεγεν τοῖς πολίταις ἐν τῇ ἀγορᾷ καὶ πάντες ἤκουον.
+---
+# ============================================================================
+# SECTION 38: BREATH PACING — force ceiling
+# Purpose: Test force_breath_words (20) on a very long clause with no
+# natural trigger words. Should force a pause at word 20.
+# Expected: Forced pause even without a conjunction/preposition.
+# ============================================================================
+ὁ δὲ ἀνὴρ ὁ σοφὸς ὁ τοῦ δήμου ὁ τοῦ ἄστεος ὁ τῶν Ἀθηναίων ὁ τῶν Ἑλλήνων ὁ τῶν ἀνθρώπων ὁ τῶν θεῶν ὁ τοῦ κόσμου ἔλεγεν.
+---
+# ============================================================================
+# SECTION 39: INTER-WORD ASPIRATION — rough breathing after vowel-final word
+# Purpose: When a vowel-final word precedes a rough-breathing word,
 # verify the aspiration is audible at the boundary.
 # ============================================================================
 τὸ ἡμέτερον
 τὰ ὅπλα
-ἐν ᾅδου
+τὴν ἡμέραν
 ---
 # ============================================================================
-# SECTION 40: LONG VOWEL — η ω in non-accented positions
+# SECTION 40: LONG VOWELS — η ω in non-accented positions
 # Purpose: Confirm η and ω maintain long duration even without accent.
-# Expected: Measurably longer than ε and ο in same position.
+# Expected: Measurably longer than ε and ο in equivalent position.
 # ============================================================================
 ἀνθρώπων
 στρατηγοῦ
@@ -374,82 +420,78 @@
 ὠφέλεια
 ---
 # ============================================================================
-# SECTION 41: ACCENT — perispomenon on words with iota subscript
-# Purpose: Specifically target the circumflex + iota subscript bug.
-# Known issue #1: perispomenon (U+0342) on ᾳ ῃ ῳ was missed.
+# SECTION 41: PITCH SPIKE STRESS TEST — high baseline + acute
+# Purpose: Provoke the spike issue seen in Section 8 (354Hz) and Section 11
+# (364Hz). Words at sentence start have baseline ~+10% plus contour_peak
+# +30% = +40%. If the voice overshoots, we need tighter clamping.
+# Test: acute-accented words at sentence start, then same words later.
+# Expected: No F0 excursion above 300Hz.
 # ============================================================================
-τῷ
-τῇ
-πρᾴως
-ᾧ
-ᾗ
+ᾄδω τὸν ὕμνον.
+τὸν ὕμνον ᾄδω.
+Ἀττικὴ γῆ ἐστιν.
+γῆ ἐστιν Ἀττική.
 ---
 # ============================================================================
-# SECTION 42: ACCENT — properispomenon (circumflex on penult)
-# Purpose: Test circumflex specifically on penult, not just ultima.
-# Expected: Rise-fall on penult syllable, not ultima.
+# SECTION 42: PITCH SPIKE STRESS TEST — long passage
+# Purpose: Extended passage to check for contour accumulation artifacts.
+# Expected: No F0 above 300Hz. Sustained downdrift with clause resets.
 # ============================================================================
-πρᾶγμα
-σῶμα
-δοῦλος
-οἶνος
-μοῦσα
+νόησον τοίνυν, ἣν δ᾽ ἐγώ, ὥσπερ λέγομεν, δύο αὐτὼ εἶναι, καὶ βασιλεύειν τὸ μὲν νοητοῦ γένους τε καὶ τόπου, τὸ δ᾽ αὖ ὁρατοῦ.
 ---
 # ============================================================================
-# SECTION 43: PITCH CONTOUR — circumflex tail_pct boundary
-# Purpose: Test words where circumflex accent is on the very last vowel
-# unit, pushing tail_pct to 100%.
-# Known issue #2: duplicate contour point when tail_pct hits 100%.
+# SECTION 43: SENTENCE SPLITTING — semicolon as sentence delimiter
+# Purpose: Verify that ; correctly splits sentences for downdrift reset.
+# Each ; should start a new downdrift slope. The previous discussion found
+# that multiple ; within one section's text might not split correctly.
+# Expected: Three separate downdrift slopes, one per sentence.
 # ============================================================================
-τιμῆ
-ποῦ
-πῶς
-εὖ
-οὗ
+τίς ἐστιν; τί λέγει; ποῦ ἐστιν;
 ---
 # ============================================================================
-# SECTION 44: MIXED — proclitics with rough breathing host
-# Purpose: Proclitic + rough-breathing word. Tests prosodic grouping
-# AND aspiration rendering simultaneously.
+# SECTION 44: SENTENCE SPLITTING — period as sentence delimiter
+# Purpose: Same test as 43 but with periods. Baseline comparison.
+# Expected: Three separate downdrift slopes.
 # ============================================================================
-ὁ ἥλιος
-ἐν ᾅδου
-ἐξ ἧς
-πρὸς ἡμᾶς
+ὁ ἀνὴρ λέγει. ἡ γυνὴ ἀκούει. ὁ παῖς τρέχει.
 ---
 # ============================================================================
-# SECTION 45: REAL LITERARY PASSAGE — Herodotus 1.1 (Ionic dialect)
-# Purpose: Test on Ionic forms. Some vowel differences from Attic.
-# Expected: Pipeline should still handle polytonic correctly even if
-# CLTK's transcription is Attic-normalized.
+# SECTION 45: ANO TELEIA — · as clause boundary (not sentence boundary)
+# Purpose: Verify · triggers clause-boundary pause and baseline rewind
+# but does NOT reset the downdrift entirely (it's not a sentence end).
+# Expected: Partial baseline recovery, then continued decline.
 # ============================================================================
-Ἡροδότου Ἁλικαρνησσέος ἱστορίης ἀπόδεξις ἥδε, ὡς μήτε τὰ γενόμενα ἐξ ἀνθρώπων τῷ χρόνῳ ἐξίτηλα γένηται.
+ὁ μὲν ἀνὴρ ἔλεγεν· ἡ δὲ γυνὴ ἤκουεν.
 ---
 # ============================================================================
-# SECTION 46: REAL LITERARY PASSAGE — Aristotle, Nicomachean Ethics 1094a
-# Purpose: Dense philosophical prose, many abstract nouns.
+# SECTION 46: EDGE CASE — single monosyllabic word
+# Purpose: Test that single monosyllables don't crash or produce silence.
 # ============================================================================
-πᾶσα τέχνη καὶ πᾶσα μέθοδος, ὁμοίως δὲ πρᾶξίς τε καὶ προαίρεσις, ἀγαθοῦ τινὸς ἐφίεσθαι δοκεῖ.
+ὤ
+ἦ
+εἰ
 ---
 # ============================================================================
-# SECTION 47: REAL LITERARY PASSAGE — Euripides, Medea 1-2
-# Purpose: Tragic iambic trimeter, emotional register.
+# SECTION 47: EDGE CASE — single polysyllabic word with many features
+# Purpose: Stress test on a single complex word in isolation.
+# Expected: All features (aspiration, length, accent) on one word.
 # ============================================================================
-εἴθ' ὤφελ' Ἀργοῦς μὴ διαπτάσθαι σκάφος Κόλχων ἐς αἶαν κυανέας Συμπληγάδας·
+παρεσκευασμένος
+ἐπιτετηδευμένως
 ---
 # ============================================================================
-# SECTION 48: STRESS TEST — very long period (Demosthenes-style)
-# Purpose: Push downdrift and clause resets to their limits.
-# Expected: Multiple visible clause resets, sustained declination,
-# no pitch spikes from contour accumulation.
+# SECTION 48: EDGE CASE — repeated identical words
+# Purpose: Verify no caching/deduplication artifacts across repetitions.
+# Expected: Each instance rendered identically with consistent prosody.
 # ============================================================================
-ἐγὼ δ', ὦ ἄνδρες Ἀθηναῖοι, τοσοῦτον ἀπέχω τοῦ νομίζειν ἀξίαν εἰρηκέναι κατηγορίαν Αἰσχίνης, ὥστε φοβοῦμαι μὴ τὴν ἀρχὴν ὑπολάβητέ τινες ὑμῶν τί δήποτε περὶ πραγμάτων οὐδὲν αὑτῷ προσηκόντων ἐνέστηκεν ἀγῶνα τοσοῦτον;
+λόγος λόγος λόγος
+τῆς τῆς τῆς
 ---
 # ============================================================================
-# SECTION 49: EDGE CASE — words with multiple diacriticals stacked
-# Purpose: Test that the Unicode normalization handles complex stacking.
-# Expected: Correct accent detection when breathing + accent + iota sub
-# are all present on one character.
+# SECTION 49: EDGE CASE — words with stacked diacriticals
+# Purpose: Test Unicode normalization with breathing + accent + iota subscript
+# all present on one character.
+# Expected: Correct accent detection, correct IPA, no crash.
 # ============================================================================
 ᾄδω
 ᾅδης
@@ -458,13 +500,85 @@
 ᾤμωξεν
 ---
 # ============================================================================
-# SECTION 50: REGRESSION — the original diagnostic sentences
-# Purpose: Preserve the original test cases from input_old.txt for
-# regression comparison across runs.
+# SECTION 50: EDGE CASE — xi words (ξ as cluster)
+# Purpose: Test ξ → [ks] and γξ → [ŋks] rendering.
+# Also tests CLTK handling of ξυν- (Thucydidean/Ionic spelling of σύν-).
+# ============================================================================
+ξένος
+ξύλον
+σφίγξ
+ξυμμαχία
+ξυνέβη
+---
+# ============================================================================
+# SECTION 51: EDGE CASE — chi before consonant (χθ, χρ)
+# Purpose: Aspirated velar before another consonant. German voice may
+# insert epenthetic vowel or drop aspiration.
+# ============================================================================
+χθών
+χρόνος
+ἐχθρός
+---
+# ============================================================================
+# SECTION 52: REAL LITERARY — Plato, Apology 17a (opening)
+# Purpose: End-to-end test on authentic connected prose.
+# Expected: Natural-sounding continuous speech with all features working.
+# ============================================================================
+ὅ τι μὲν ὑμεῖς, ὦ ἄνδρες Ἀθηναῖοι, πεπόνθατε ὑπὸ τῶν ἐμῶν κατηγόρων, οὐκ οἶδα· ἐγὼ δ᾽ οὖν καὶ αὐτὸς ὑπ᾽ αὐτῶν ὀλίγου ἐμαυτοῦ ἐπελαθόμην, οὕτω πιθανῶς ἔλεγον.
+---
+# ============================================================================
+# SECTION 53: REAL LITERARY — Homer, Iliad 1.1-2
+# Purpose: Dactylic hexameter. Heavy syllables, epic register.
+# Expected: Appropriate pacing. All aspirations and accents correct.
+# ============================================================================
+μῆνιν ἄειδε, θεά, Πηληϊάδεω Ἀχιλῆος οὐλομένην, ἣ μυρί᾽ Ἀχαιοῖς ἄλγε᾽ ἔθηκε.
+---
+# ============================================================================
+# SECTION 54: REAL LITERARY — Thucydides 1.1
+# Purpose: Complex periodic sentence. Sustained downdrift with resets.
+# ============================================================================
+Θουκυδίδης Ἀθηναῖος ξυνέγραψε τὸν πόλεμον τῶν Πελοποννησίων καὶ Ἀθηναίων, ὡς ἐπολέμησαν πρὸς ἀλλήλους, ἀρξάμενος εὐθὺς καθισταμένου καὶ ἐλπίσας μέγαν τε ἔσεσθαι καὶ ἀξιολογώτατον τῶν προγεγενημένων.
+---
+# ============================================================================
+# SECTION 55: REAL LITERARY — Sophocles, Antigone 332-333
+# Purpose: Tragic trimeter. Different register from prose.
+# ============================================================================
+πολλὰ τὰ δεινὰ κοὐδὲν ἀνθρώπου δεινότερον πέλει.
+---
+# ============================================================================
+# SECTION 56: REAL LITERARY — Aristotle, Nicomachean Ethics 1094a
+# Purpose: Dense philosophical prose, many abstract nouns.
+# ============================================================================
+πᾶσα τέχνη καὶ πᾶσα μέθοδος, ὁμοίως δὲ πρᾶξίς τε καὶ προαίρεσις, ἀγαθοῦ τινὸς ἐφίεσθαι δοκεῖ.
+---
+# ============================================================================
+# SECTION 57: REAL LITERARY — Euripides, Medea 1-2
+# Purpose: Tragic iambic trimeter, emotional register.
+# ============================================================================
+εἴθ᾽ ὤφελ᾽ Ἀργοῦς μὴ διαπτάσθαι σκάφος Κόλχων ἐς αἶαν κυανέας Συμπληγάδας·
+---
+# ============================================================================
+# SECTION 58: REAL LITERARY — Herodotus 1.1 (Ionic dialect)
+# Purpose: Ionic forms. CLTK is Attic-tuned, so some vowel differences.
+# Expected: Pipeline handles polytonic correctly even on non-Attic text.
+# ============================================================================
+Ἡροδότου Ἁλικαρνησσέος ἱστορίης ἀπόδεξις ἥδε, ὡς μήτε τὰ γενόμενα ἐξ ἀνθρώπων τῷ χρόνῳ ἐξίτηλα γένηται.
+---
+# ============================================================================
+# SECTION 59: STRESS TEST — Demosthenes-style long period
+# Purpose: Push downdrift and clause resets to limits. ~30 words.
+# Expected: Multiple visible clause resets, sustained declination,
+# no pitch spikes from contour accumulation.
+# ============================================================================
+ἐγὼ δ᾽, ὦ ἄνδρες Ἀθηναῖοι, τοσοῦτον ἀπέχω τοῦ νομίζειν ἀξίαν εἰρηκέναι κατηγορίαν Αἰσχίνης, ὥστε φοβοῦμαι μὴ τὴν ἀρχὴν ὑπολάβητέ τινες ὑμῶν τί δήποτε περὶ πραγμάτων οὐδὲν αὑτῷ προσηκόντων ἐνέστηκεν ἀγῶνα τοσοῦτον;
+---
+# ============================================================================
+# SECTION 60: REGRESSION — original diagnostic sentences from input_old.txt
+# Purpose: Preserve original test cases for regression comparison.
 # ============================================================================
 ἀλλά ἄλλος θάλαττα Ἀττική γράμμα ἵππος
 τῇ ᾄδω τῷ ᾅδης λόγῳ τιμῇ ᾠδή
 μῆνιν ἄειδε, θεά, Πηληϊάδεω Ἀχιλῆος
 τίς ἐστιν; τὶς ἄνθρωπος
-νόησον τοίνυν, ἣν δ' ἐγώ, ὥσπερ λέγομεν, δύο αὐτὼ εἶναι, καὶ βασιλεύειν τὸ μὲν νοητοῦ γένους τε καὶ τόπου, τὸ δ' αὖ ὁρατοῦ· ἵνα μὴ οὐρανοῦ εἰπὼν δόξω σοι σοφίζεσθαι περὶ τὸ ὄνομα. ἀλλ' οὖν δύο ταῦτα εἴδη ἔχεις, ὁρατόν, νοητόν; ἔχω. ὥσπερ τοίνυν γραμμὴν δίχα τετμημένην λαβὼν ἄνισα τμήματα, πάλιν τέμνε ἑκάτερον τὸ τμῆμα ἀνὰ τὸν αὐτὸν λόγον, τό τε τοῦ ὁρωμένου γένους καὶ τὸ τοῦ νοουμένου, καί σοι ἔσται σαφηνείᾳ καὶ ἀσαφείᾳ πρὸς ἄλληλα, ἐν μὲν τῷ ὁρωμένῳ τὸ μὲν ἕτερον τμῆμα εἰκόνες· λέγω δὲ τὰς εἰκόνας πρῶτον μὲν τὰς σκιάς, ἔπειτα τὰ ἐν τοῖς ὕδασι φαντάσματα καὶ ἐν τοῖς ὅσα πυκνά τε καὶ λεῖα καὶ φανὰ συνέστηκεν, καὶ πᾶν τὸ τοιοῦτον, εἰ κατανοεῖς. τί δ' οὔ; ἆρα δὴ ὁρατόν, νοητόν;
+νόησον τοίνυν, ἣν δ᾽ ἐγώ, ὥσπερ λέγομεν, δύο αὐτὼ εἶναι, καὶ βασιλεύειν τὸ μὲν νοητοῦ γένους τε καὶ τόπου, τὸ δ᾽ αὖ ὁρατοῦ· ἵνα μὴ οὐρανοῦ εἰπὼν δόξω σοι σοφίζεσθαι περὶ τὸ ὄνομα. ἀλλ᾽ οὖν δύο ταῦτα εἴδη ἔχεις, ὁρατόν, νοητόν; ἔχω. ὥσπερ τοίνυν γραμμὴν δίχα τετμημένην λαβὼν ἄνισα τμήματα, πάλιν τέμνε ἑκάτερον τὸ τμῆμα ἀνὰ τὸν αὐτὸν λόγον, τό τε τοῦ ὁρωμένου γένους καὶ τὸ τοῦ νοουμένου, καί σοι ἔσται σαφηνείᾳ καὶ ἀσαφείᾳ πρὸς ἄλληλα, ἐν μὲν τῷ ὁρωμένῳ τὸ μὲν ἕτερον τμῆμα εἰκόνες· λέγω δὲ τὰς εἰκόνας πρῶτον μὲν τὰς σκιάς, ἔπειτα τὰ ἐν τοῖς ὕδασι φαντάσματα καὶ ἐν τοῖς ὅσα πυκνά τε καὶ λεῖα καὶ φανὰ συνέστηκεν, καὶ πᾶν τὸ τοιοῦτον, εἰ κατανοεῖς. τί δ᾽ οὔ; ἆρα δὴ ὁρατόν, νοητόν;
 ---

@@ -1479,10 +1479,15 @@ def calculate_prosody(word_data, baseline_shift=0):
     c_grave = config["prosody"].get("contour_grave", 5)
     c_end   = config["prosody"].get("contour_end",   -12)
 
+
     val_start = baseline_shift
     val_peak  = baseline_shift + c_peak
     val_grave = baseline_shift + c_grave
     val_end   = baseline_shift + c_end
+
+    max_total_excursion = config["prosody"].get("max_total_excursion", 50)
+    val_peak  = min(val_peak, max_total_excursion)
+    val_grave = min(val_grave, max_total_excursion)
 
     def p(val): return f"{int(val):+d}%"
 
@@ -1740,6 +1745,11 @@ def build_ssml_fragments(full_text):
 
             words = part.split()
 
+            # Strip trailing punctuation that the sentence splitter
+            # didn't consume (e.g., ; stays attached to the last word)
+            words = [w.rstrip(';.·') for w in words]
+            words = [w for w in words if w]  # remove any that became empty
+
             # Enclitic / Proclitic / Sandhi Grouping
             # Instead of fusing words into a single string (which confuses CLTK),
             # we group them into prosodic units. Each word is transcribed
@@ -1824,6 +1834,15 @@ def build_ssml_fragments(full_text):
 
                 dummy_text = romanize_greek(" ".join(group))
                 contour, dur_rate = calculate_prosody(group_word_data, baseline_shift=current_baseline)
+
+                # Interrogative: give unaccented words a contour so the updrift
+                # baseline actually manifests in the audio. Without a contour tag,
+                # the voice uses its own default pitch, ignoring our baseline.
+                if (sentence.strip().endswith(';') and 
+                    group_accent_type == "none" and
+                    contour is None):
+                    bl = int(current_baseline)
+                    contour = f"(0%,{bl:+d}%) (100%,{bl+20:+d}%)"
 
                 final_ssml = make_phoneme_tag(combined_ipa, dummy_text)
 
